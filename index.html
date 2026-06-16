@@ -318,7 +318,7 @@
       <div class="nav-actions">
         <button class="tab-btn active" data-tab-btn data-role="all" onclick="switchTab('dash', this)"><i class="fa-solid fa-chart-line"></i> Dashboard</button>
         <button class="tab-btn" data-tab-btn data-role="all" onclick="switchTab('req', this)"><i class="fa-solid fa-file-invoice"></i> Material Request</button>
-        <button class="tab-btn" data-tab-btn data-role="planner" onclick="switchTab('track', this)"><i class="fa-solid fa-list-check"></i> Tracker</button>
+        <button class="tab-btn" data-tab-btn data-role="all" onclick="switchTab('track', this)"><i class="fa-solid fa-list-check"></i> My Requests</button>
         <button class="tab-btn" data-tab-btn data-role="planner" onclick="switchTab('planner', this)"><i class="fa-solid fa-user-gear"></i> Planning Data Entry</button>
         <button class="tab-btn" data-tab-btn data-role="planner" onclick="switchTab('admin', this)"><i class="fa-solid fa-lock"></i> Admin Entry</button>
         <button class="btn white sm switch-role" type="button" onclick="openRoleModal(true)"><i class="fa-solid fa-users"></i> Switch Role</button>
@@ -329,8 +329,39 @@
     </div>
   </header>
 
+  <!-- PR Detail Modal -->
+  <div class="modal-overlay" id="prDetailModal" style="z-index:4000;">
+    <div class="modal" style="width:min(1100px,97vw);max-height:90vh;display:flex;flex-direction:column;text-align:left;padding:0;overflow:hidden;">
+      <div style="padding:20px 24px 14px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
+        <div>
+          <h3 class="modal-title" id="prDetailTitle" style="margin:0;font-size:1.1rem;"></h3>
+          <div id="prDetailSubtitle" style="font-size:.83rem;color:#64748b;margin-top:4px;"></div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <select id="prDetailAreaFilter" onchange="filterPrDetailTable()" style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:.85rem;background:#fff;">
+            <option value="All">All Areas</option>
+          </select>
+          <input id="prDetailSearch" oninput="filterPrDetailTable()" placeholder="Search material / PR no..." style="padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:.85rem;min-width:200px;">
+          <button class="btn gray sm" onclick="exportPrDetailCSV()"><i class="fa-solid fa-file-csv"></i> Export</button>
+          <button class="btn gray sm" onclick="document.getElementById('prDetailModal').style.display='none'"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      </div>
+      <!-- Area summary chips -->
+      <div id="prDetailAreaChips" style="padding:12px 24px;border-bottom:1px solid #f1f5f9;display:flex;gap:8px;flex-wrap:wrap;flex-shrink:0;background:#f8fafc;"></div>
+      <div style="overflow:auto;flex:1;">
+        <table style="width:100%;border-collapse:collapse;font-size:.82rem;min-width:900px;">
+          <thead id="prDetailHead"></thead>
+          <tbody id="prDetailBody"></tbody>
+        </table>
+      </div>
+      <div style="padding:10px 24px;border-top:1px solid #e2e8f0;font-size:.8rem;color:#64748b;flex-shrink:0;" id="prDetailFooter"></div>
+    </div>
+  </div>
+
   <main class="main">
     <section id="dash" class="tab-panel">
+
+      <!-- KPI Cards -->
       <div class="kpi-grid">
         <div class="kpi blue"><div class="kpi-label">CY26 Allocated Budget</div><div class="kpi-value" id="kBudgetTotal">10.96 CR</div><i class="fa-solid fa-sack-dollar kpi-icon"></i></div>
         <div class="kpi green"><div class="kpi-label">Till Date Consumption</div><div class="kpi-value" id="kBudgetUsed">2.30 CR</div><i class="fa-solid fa-chart-pie kpi-icon"></i></div>
@@ -338,14 +369,32 @@
         <div class="kpi red"><div class="kpi-label">Total PO Created (YTD)</div><div class="kpi-value" id="kPoTotal">1,723</div><i class="fa-solid fa-file-contract kpi-icon"></i></div>
       </div>
 
-      <div class="grid-2">
+      <!-- Clickable PR-PO Status Cards -->
+      <div class="card" id="prPoStatusCard" style="display:none;">
+        <h3 class="card-title"><i class="fa-solid fa-bars-progress"></i> PR-PO Status — Click Any Card to View Details</h3>
+        <div id="prPoStatusGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;margin-bottom:18px;"></div>
+        <div class="grid-2">
+          <div><div class="card-title" style="font-size:.85rem;margin-bottom:10px;"><i class="fa-solid fa-chart-pie"></i> Status Distribution</div><div class="chart-wrap" style="min-height:280px;"><canvas id="prPoChart"></canvas></div></div>
+          <div><div class="card-title" style="font-size:.85rem;margin-bottom:10px;"><i class="fa-solid fa-building"></i> Area-wise Pending Count</div><div class="chart-wrap" style="min-height:280px;"><canvas id="areaBarChart"></canvas></div></div>
+        </div>
+      </div>
+
+      <!-- PR Release Status -->
+      <div class="card" id="prReleaseStatusCard" style="display:none;">
+        <h3 class="card-title"><i class="fa-solid fa-timeline"></i> PR Release Status — Click Any Card to View Details</h3>
+        <div id="prReleaseStatusGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;margin-bottom:18px;"></div>
+        <div class="chart-wrap" style="min-height:260px;"><canvas id="prReleaseChart"></canvas></div>
+      </div>
+
+      <!-- Charts (shown when no excel data) -->
+      <div class="grid-2" id="legacyCharts">
         <div class="card">
           <h3 class="card-title"><i class="fa-solid fa-bars-progress"></i> PR-PO Status List (<span id="prPoTitleTotal">0</span>)</h3>
-          <div class="chart-wrap"><canvas id="prPoChart"></canvas></div>
+          <div class="chart-wrap"><canvas id="prPoChartLegacy"></canvas></div>
         </div>
         <div class="card">
           <h3 class="card-title"><i class="fa-solid fa-timeline"></i> PR Release Status (<span id="prReleaseTitleTotal">0</span>)</h3>
-          <div class="chart-wrap"><canvas id="prReleaseChart"></canvas></div>
+          <div class="chart-wrap"><canvas id="prReleaseChartLegacy"></canvas></div>
         </div>
       </div>
 
@@ -365,18 +414,7 @@
         <div class="table-shell">
           <table>
             <thead>
-              <tr>
-                <th>Details</th>
-                <th>HYD</th>
-                <th>MH</th>
-                <th>Operation</th>
-                <th>PH</th>
-                <th>Shift</th>
-                <th>Store</th>
-                <th>Tower</th>
-                <th>Capex</th>
-                <th>Grand Total</th>
-              </tr>
+              <tr><th>Details</th><th>HYD</th><th>MH</th><th>Operation</th><th>PH</th><th>Shift</th><th>Store</th><th>Tower</th><th>Capex</th><th>Grand Total</th></tr>
             </thead>
             <tbody id="budgetTableBody"></tbody>
           </table>
@@ -509,7 +547,7 @@
               <option value="Consumable">Consumable</option>
             </select>
           </div>
-          <div class="toolbar-right">
+          <div class="toolbar-right planner-only">
             <button class="btn gray" type="button" onclick="exportCSV()"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
             <button class="btn primary" type="button" onclick="exportApprovalSheet()"><i class="fa-solid fa-file-export"></i> Export Approval Readiness Sheet</button>
             <button class="btn blue" type="button" onclick="seedDemoData()"><i class="fa-solid fa-wand-magic-sparkles"></i> Load Demo Data</button>
@@ -609,6 +647,27 @@
     </section>
 
     <section id="admin" class="tab-panel hidden">
+
+      <!-- Excel Upload — Planner Only -->
+      <div class="card" style="border-top:4px solid #10b981;background:linear-gradient(135deg,#ecfdf5,#f8fafc);margin-bottom:22px;">
+        <h3 class="card-title" style="margin-bottom:14px;"><i class="fa-solid fa-file-excel" style="color:#10b981;"></i> Import Planning Excel File (PR-PO Data)</h3>
+        <div class="biz-box" style="margin-bottom:16px;">Upload your daily PR-PO Excel file here. The Dashboard will instantly update with clickable status cards and area-wise drill-down details. Previous data is remembered until you clear or re-upload.</div>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+          <label class="btn green" style="cursor:pointer;font-size:.95rem;padding:12px 20px;">
+            <i class="fa-solid fa-upload"></i> Upload Excel File
+            <input type="file" id="excelFileInput" accept=".xlsx,.xls" style="display:none;" onchange="handleExcelUpload(this)">
+          </label>
+          <button class="btn gray" onclick="clearExcelData()" id="clearExcelBtn" style="display:none;"><i class="fa-solid fa-rotate-left"></i> Clear Excel Data</button>
+          <div id="excelFileInfo" style="font-size:.85rem;color:#10b981;font-weight:600;display:none;"></div>
+        </div>
+        <div id="excelProgress" style="display:none;margin-top:14px;">
+          <div style="background:#e2e8f0;border-radius:999px;height:8px;overflow:hidden;">
+            <div id="excelProgressBar" style="height:100%;background:linear-gradient(90deg,#2563eb,#10b981);border-radius:999px;width:0%;transition:width .3s ease;"></div>
+          </div>
+          <div id="excelProgressText" style="font-size:.82rem;color:#64748b;margin-top:6px;">Processing...</div>
+        </div>
+      </div>
+
       <div class="card">
         <h3 class="card-title"><i class="fa-solid fa-lock"></i> Admin Entry – Dashboard Master Data</h3>
         <div class="biz-box">Use this tab to update the dashboard numbers and chart data. These values will immediately reflect on the Dashboard tab.</div>
@@ -708,11 +767,11 @@
       <div class="role-grid">
         <button class="role-card" type="button" onclick="chooseRole('user')">
           <h4><i class="fa-solid fa-user"></i> User Access</h4>
-          <p>Visible tabs: <strong>Dashboard</strong> and <strong>Material Request</strong> only.</p>
+          <p>✅ Dashboard<br>✅ Submit Material Request<br>✅ View request status (read-only)<br>❌ Cannot approve / reject</p>
         </button>
         <button class="role-card" type="button" onclick="showPlannerPasswordPanel()">
           <h4><i class="fa-solid fa-user-gear"></i> Planner Access</h4>
-          <p>Visible tabs: <strong>Dashboard</strong>, <strong>Material Request</strong>, <strong>Tracker</strong>, <strong>Planning Data Entry</strong>, and <strong>Admin Entry</strong>.</p>
+          <p>✅ All User tabs<br>✅ Approve / Return / Reject items<br>✅ Planning Data Entry<br>✅ Admin Entry (password required)</p>
         </button>
       </div>
       <div class="password-panel hidden" id="plannerPasswordPanel">
@@ -908,17 +967,22 @@
 
     function applyRoleAccess(){
       const isPlanner = currentRole === 'planner';
+      const isUser    = currentRole === 'user';
       document.getElementById('roleLabel').textContent = `Role: ${isPlanner ? 'Planner' : 'User'}`;
+      // Show/hide planner-only tabs (Planning Data Entry, Admin Entry)
       document.querySelectorAll('[data-role="planner"]').forEach(el => el.classList.toggle('hidden', !isPlanner));
+      // Hide planner action buttons inside tracker when user is logged in
+      document.querySelectorAll('.planner-only').forEach(el => el.classList.toggle('hidden', !isPlanner));
       const activeTab = localStorage.getItem(TAB_KEY) || 'dash';
-      if(!isPlanner && ['track','planner','admin'].includes(activeTab)){
+      if(!isPlanner && ['planner','admin'].includes(activeTab)){
         const dashBtn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes("'dash'"));
         switchTab('dash', dashBtn);
       }
     }
 
     function switchTab(id, btn){
-      if(currentRole !== 'planner' && ['track','planner','admin'].includes(id)){
+      // Users can access dash, req, track — but NOT planner or admin
+      if(currentRole !== 'planner' && ['planner','admin'].includes(id)){
         alert('Planner access is required for this tab.');
         openRoleModal(true);
         return;
@@ -937,7 +1001,7 @@
 
     function activateSavedTab(){
       const id = localStorage.getItem(TAB_KEY) || 'dash';
-      const safeId = (currentRole !== 'planner' && ['track','planner','admin'].includes(id)) ? 'dash' : id;
+      const safeId = (currentRole !== 'planner' && ['planner','admin'].includes(id)) ? 'dash' : id;
       const btn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes(`'${safeId}'`)) || document.querySelector('[data-tab-btn]');
       switchTab(safeId, btn);
     }
@@ -1219,10 +1283,11 @@
         const emergencyCount = req.items.filter(item => item.type === 'Emergency').length;
         const breakdownCount = req.items.filter(item => item.type === 'Breakdown').length;
         const attachmentsCount = (req.attachments || []).length;
+        const isPlanner = currentRole === 'planner';
         const lineRows = req.items.map((item, idx) => `
           <tr class="${item.type === 'Emergency' || item.type === 'Breakdown' ? 'row-emergency' : ''}">
             <td>${idx + 1}</td>
-            <td><button class="material-link" type="button" onclick="openPlanner('${req.id}','${item.id}')">${escapeHtml(item.matCode)}</button></td>
+            <td>${isPlanner ? `<button class="material-link" type="button" onclick="openPlanner('${req.id}','${item.id}')">${escapeHtml(item.matCode)}</button>` : `<strong>${escapeHtml(item.matCode)}</strong>`}</td>
             <td>${escapeHtml(item.desc)}</td>
             <td>${typeBadge(item.type)}</td>
             <td>${escapeHtml(item.planner?.uomReview || item.uom)}</td>
@@ -1231,7 +1296,7 @@
             <td>${Number(item.planner?.siteStockReview ?? item.siteStock ?? 0)}</td>
             <td>${escapeHtml(item.planner?.installedLocation || item.location || '-')}</td>
             <td>${statusPill(item.status || 'Pending Review')}</td>
-            <td><button class="btn white sm" type="button" onclick="openPlanner('${req.id}','${item.id}')"><i class="fa-solid fa-pen-to-square"></i> Review</button></td>
+            ${isPlanner ? `<td><button class="btn white sm" type="button" onclick="openPlanner('${req.id}','${item.id}')"><i class="fa-solid fa-pen-to-square"></i> Review</button></td>` : `<td><span class="muted" style="font-size:.8rem;">View only</span></td>`}
           </tr>
         `).join('');
 
@@ -1256,12 +1321,13 @@
                   <span class="chip warn"><i class="fa-solid fa-rotate-left"></i> Returned / Rejected: ${counts.returned + counts.rejected}</span>
                 </div>
               </div>
+              ${isPlanner ? `
               <div class="request-actions">
                 <button class="btn primary sm" type="button" onclick="exportApprovalSheet('${req.id}')"><i class="fa-solid fa-file-export"></i> Export Sheet</button>
                 <button class="btn green sm" type="button" onclick="bulkUpdateRequest('${req.id}','Approved')"><i class="fa-solid fa-check-double"></i> Approve All Pending</button>
                 <button class="btn orange sm" type="button" onclick="bulkUpdateRequest('${req.id}','Returned')"><i class="fa-solid fa-rotate-left"></i> Return All Pending</button>
                 <button class="btn red sm" type="button" onclick="bulkUpdateRequest('${req.id}','Rejected')"><i class="fa-solid fa-ban"></i> Reject All Pending</button>
-              </div>
+              </div>` : `<div class="chip" style="align-self:flex-start;background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;"><i class="fa-solid fa-eye"></i> View Only</div>`}
             </div>
             <div class="biz-box"><strong>Business Case:</strong> ${escapeHtml(req.reqNeed)} | <strong>Qty Logic:</strong> ${escapeHtml(req.reqCalc)} | <strong>Risk:</strong> ${escapeHtml(req.reqRisk)} | <strong>Alternative:</strong> ${escapeHtml(req.reqAlt)}</div>
             <div class="attachment-list" style="margin-bottom:12px;">${getAttachmentHtml(req.attachments)}</div>
@@ -1790,7 +1856,7 @@
 
       /* PR-PO Status – horizontal bar */
       if(charts.prPo) charts.prPo.destroy();
-      const prPoCtx = document.getElementById('prPoChart').getContext('2d');
+      const prPoCtx = document.getElementById('prPoChartLegacy').getContext('2d');
       charts.prPo = new Chart(prPoCtx, {
         type: 'bar',
         data: {
@@ -1824,7 +1890,7 @@
 
       /* PR Release Status – doughnut */
       if(charts.prRelease) charts.prRelease.destroy();
-      const prRelCtx = document.getElementById('prReleaseChart').getContext('2d');
+      const prRelCtx = document.getElementById('prReleaseChartLegacy').getContext('2d');
       charts.prRelease = new Chart(prRelCtx, {
         type: 'doughnut',
         data: {
@@ -1988,7 +2054,374 @@
       alert('Dashboard data saved and deployed to cloud successfully!');
     }
 
-    document.getElementById('requestForm').addEventListener('submit', submitRequest);
+    /* ═══════════════════════════════════════════════════
+       EXCEL UPLOAD & PR-PO DETAIL DRILL-DOWN SYSTEM
+    ═══════════════════════════════════════════════════ */
+
+    const EXCEL_KEY = 'corexPortalV26_excelData';
+    let excelRows = []; // all parsed rows from Excel
+    let prDetailRows = []; // rows shown in current modal
+    let prDetailFiltered = []; // after filter
+
+    // Status categories and their colours
+    const STATUS_CONFIG = {
+      'PO Created':    { color:'#10b981', bg:'#d1fae5', icon:'fa-circle-check',    label:'PO Created'    },
+      'RFQ Pending':   { color:'#e11d48', bg:'#fee2e2', icon:'fa-hourglass-start', label:'RFQ Pending'   },
+      'RFQ Created':   { color:'#f59e0b', bg:'#fef3c7', icon:'fa-file-circle-check',label:'RFQ Created'  },
+      'TR Submitted':  { color:'#2563eb', bg:'#dbeafe', icon:'fa-paper-plane',     label:'TR Submitted'  },
+      'TR Pending':    { color:'#8b5cf6', bg:'#ede9fe', icon:'fa-clock',           label:'TR Pending'    },
+      'PO Pending':    { color:'#f97316', bg:'#ffedd5', icon:'fa-file-invoice',    label:'PO Pending'    },
+      'With Planner':  { color:'#0891b2', bg:'#cffafe', icon:'fa-user-gear',       label:'With Planner'  },
+      'With HOD':      { color:'#7c3aed', bg:'#ede9fe', icon:'fa-user-tie',        label:'With HOD'      },
+      'Store Query':   { color:'#b45309', bg:'#fef3c7', icon:'fa-store',           label:'Store Query'   },
+      'With Store':    { color:'#0f766e', bg:'#ccfbf1', icon:'fa-warehouse',       label:'With Store'    },
+      'With TC':       { color:'#1d4ed8', bg:'#dbeafe', icon:'fa-user-check',      label:'With TC'       },
+      'Zadd Pending':  { color:'#9f1239', bg:'#ffe4e6', icon:'fa-circle-xmark',    label:'Zadd Pending'  },
+    };
+
+    const PR_RELEASE_CONFIG = {
+      'PR Released':  { color:'#10b981', bg:'#d1fae5', icon:'fa-check-circle'  },
+      'With HOD':     { color:'#7c3aed', bg:'#ede9fe', icon:'fa-user-tie'      },
+      'Store Query':  { color:'#f59e0b', bg:'#fef3c7', icon:'fa-store'         },
+      'With Store':   { color:'#0f766e', bg:'#ccfbf1', icon:'fa-warehouse'     },
+      'With Planner': { color:'#2563eb', bg:'#dbeafe', icon:'fa-user-gear'     },
+      'With TC':      { color:'#8b5cf6', bg:'#ede9fe', icon:'fa-user-check'    },
+      'Zadd Pending': { color:'#e11d48', bg:'#fee2e2', icon:'fa-circle-xmark'  },
+    };
+
+    function categorizeRow(r) {
+      const pos = (r.poStatus || '').toUpperCase();
+      const ps  = (r.prStatus || '').trim();
+      if (pos === 'PO CREATED') return 'PO Created';
+      if (pos.includes('RFQ') && pos.includes('PENDING')) return 'RFQ Pending';
+      if (pos.includes('RFQ CREATED') || pos.includes('OFFER AWAITING')) return 'RFQ Created';
+      if (pos.includes('TR SUBMITTED')) return 'TR Submitted';
+      if (pos.includes('TR PENDING')) return 'TR Pending';
+      if (pos.includes('PO RELESAE') || pos.includes('PO RELEASE')) return 'PO Pending';
+      if (['With HOD','Store Query','With Store','With Planner','With TC','Zadd Pending'].includes(ps)) return ps;
+      return 'Other';
+    }
+
+    function parseExcelDate(v) {
+      if (!v && v !== 0) return '';
+      if (typeof v === 'string') return v;
+      if (typeof v === 'number') {
+        try {
+          const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+          return d.toLocaleDateString('en-GB');
+        } catch { return String(v); }
+      }
+      if (v instanceof Date) return v.toLocaleDateString('en-GB');
+      return String(v);
+    }
+
+    async function handleExcelUpload(input) {
+      const file = input.files[0];
+      if (!file) return;
+      const banner = document.getElementById('excelUploadBanner');
+      const progress = document.getElementById('excelProgress');
+      const bar = document.getElementById('excelProgressBar');
+      const ptext = document.getElementById('excelProgressText');
+      const info = document.getElementById('excelFileInfo');
+
+      progress.style.display = 'block';
+      bar.style.width = '10%';
+      ptext.textContent = 'Reading file...';
+
+      try {
+        // Load SheetJS from CDN
+        if (!window.XLSX) {
+          await new Promise((res, rej) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+            s.onload = res; s.onerror = rej;
+            document.head.appendChild(s);
+          });
+        }
+        bar.style.width = '40%'; ptext.textContent = 'Parsing Excel...';
+
+        const buf = await file.arrayBuffer();
+        const wb  = XLSX.read(buf, { type:'array', cellDates:true });
+        const ws  = wb.Sheets[wb.SheetNames[0]];
+        const raw = XLSX.utils.sheet_to_json(ws, { defval:'' });
+
+        bar.style.width = '70%'; ptext.textContent = 'Processing rows...';
+
+        excelRows = raw.map(r => ({
+          srNo:      r['Sr-No']             || '',
+          prStatus:  r['PR Status']          || '',
+          prDate:    parseExcelDate(r['PR Date']),
+          prNo:      String(r['PR No']       || ''),
+          lineItem:  r['Line Item']          || '',
+          matCode:   String(r['Material Code']|| ''),
+          desc:      r['Description']        || '',
+          qty:       r['PR Qty']             || '',
+          uom:       r['UOM']               || '',
+          unitPrice: r['Unit Price']         || '',
+          totalValue:parseFloat(r['Total Value'])||0,
+          trackId:   r['Tracking ID']        || '',
+          area:      String(r['User Dept']   || '').toUpperCase().trim(),
+          poStatus:  r['PO Status']          || '',
+          rfqNo:     String(r['RFX/RFQ NUMBER']||''),
+          trDate:    parseExcelDate(r['TR Submission Date']),
+          offerDate: parseExcelDate(r['Offer date']),
+          poDate:    parseExcelDate(r['PO Date']),
+          poNo:      String(r['PO No']       || ''),
+          poQty:     r['PO Qty']             || '',
+          delivDate: parseExcelDate(r['PO Delivery Date']),
+          purchaser: r['Purchaser']          || '',
+          vendor:    r['Vendor Details']     || '',
+          category:  ''
+        })).filter(r => r.matCode || r.prNo);
+
+        excelRows.forEach(r => r.category = categorizeRow(r));
+
+        bar.style.width = '90%'; ptext.textContent = 'Saving...';
+
+        // Save to localStorage (compressed)
+        try { localStorage.setItem(EXCEL_KEY, JSON.stringify(excelRows)); } catch(e) { console.warn('Storage full, data not persisted'); }
+
+        bar.style.width = '100%';
+        const dt = new Date().toLocaleString('en-IN');
+        info.textContent = `✅ ${file.name} — ${excelRows.length} rows loaded on ${dt}`;
+        info.style.display = 'block';
+        document.getElementById('clearExcelBtn').style.display = '';
+        setTimeout(() => { progress.style.display = 'none'; }, 800);
+
+        renderExcelDashboard();
+      } catch(err) {
+        console.error('Excel parse error', err);
+        ptext.textContent = '❌ Error: ' + err.message;
+        bar.style.background = '#e11d48';
+      }
+      input.value = '';
+    }
+
+    function clearExcelData() {
+      if (!confirm('Clear the uploaded Excel data from dashboard?')) return;
+      excelRows = [];
+      localStorage.removeItem(EXCEL_KEY);
+      document.getElementById('excelFileInfo').style.display = 'none';
+      document.getElementById('clearExcelBtn').style.display = 'none';
+      document.getElementById('prPoStatusCard').style.display = 'none';
+      document.getElementById('prReleaseStatusCard').style.display = 'none';
+      document.getElementById('legacyCharts').style.display = '';
+    }
+
+    function renderExcelDashboard() {
+      if (!excelRows.length) return;
+      document.getElementById('legacyCharts').style.display = 'none';
+      document.getElementById('prPoStatusCard').style.display = '';
+      document.getElementById('prReleaseStatusCard').style.display = '';
+
+      // Count by category
+      const cats = {};
+      excelRows.forEach(r => { cats[r.category] = (cats[r.category]||0)+1; });
+
+      // PR-PO status clickable cards
+      const grid = document.getElementById('prPoStatusGrid');
+      grid.innerHTML = '';
+      const catOrder = ['RFQ Pending','RFQ Created','TR Submitted','TR Pending','PO Pending','PO Created','With Planner','With HOD','Store Query','With Store','With TC','Zadd Pending'];
+      catOrder.forEach(cat => {
+        const cnt = cats[cat] || 0;
+        if (!cnt) return;
+        const cfg = STATUS_CONFIG[cat] || { color:'#64748b', bg:'#f1f5f9', icon:'fa-circle' };
+        const card = document.createElement('div');
+        card.style.cssText = `background:${cfg.bg};border:1.5px solid ${cfg.color}33;border-radius:14px;padding:16px;cursor:pointer;transition:.2s ease;position:relative;overflow:hidden;`;
+        card.innerHTML = `
+          <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:${cfg.color};margin-bottom:8px;">
+            <i class="fa-solid ${cfg.icon}"></i> ${cat}
+          </div>
+          <div style="font-size:2rem;font-weight:800;color:${cfg.color};line-height:1;">${cnt}</div>
+          <div style="font-size:.72rem;color:${cfg.color}99;margin-top:4px;">items · click to view</div>
+          <i class="fa-solid fa-arrow-up-right-from-square" style="position:absolute;right:12px;top:12px;color:${cfg.color}55;font-size:.8rem;"></i>
+        `;
+        card.onmouseenter = () => { card.style.transform = 'translateY(-2px)'; card.style.boxShadow = `0 6px 20px ${cfg.color}25`; };
+        card.onmouseleave = () => { card.style.transform = ''; card.style.boxShadow = ''; };
+        card.onclick = () => openPrDetailModal(cat, excelRows.filter(r => r.category === cat));
+        grid.appendChild(card);
+      });
+
+      // PR-PO doughnut chart
+      ensureChartsLoaded().then(() => {
+        if (!window.Chart) return;
+        const nonPo = catOrder.filter(c => c !== 'PO Created' && (cats[c]||0) > 0);
+        const poColors = ['#e11d48','#f59e0b','#2563eb','#8b5cf6','#f97316','#0891b2','#7c3aed','#b45309','#0f766e','#1d4ed8','#9f1239'];
+        if (charts.prPo) charts.prPo.destroy();
+        charts.prPo = new Chart(document.getElementById('prPoChart'), {
+          type:'doughnut',
+          data:{
+            labels: nonPo.map(c => c + ' (' + (cats[c]||0) + ')'),
+            datasets:[{ data: nonPo.map(c => cats[c]||0), backgroundColor: poColors.slice(0,nonPo.length), borderWidth:3, borderColor:'#fff', hoverOffset:10 }]
+          },
+          options:{ responsive:true, maintainAspectRatio:false, cutout:'55%', plugins:{ legend:{ position:'right', labels:{ font:{family:'Inter',size:11,weight:'600'}, padding:10 } }, tooltip:{ callbacks:{ label: ctx => ` ${ctx.label}: ${ctx.parsed}` } } } }
+        });
+
+        // Area bar chart for pending items
+        const pendingCats = ['RFQ Pending','RFQ Created','TR Submitted','TR Pending','PO Pending'];
+        const areaMap = {};
+        excelRows.filter(r => pendingCats.includes(r.category)).forEach(r => {
+          const a = r.area || 'OTHER';
+          areaMap[a] = (areaMap[a]||0)+1;
+        });
+        const areaLabels = Object.keys(areaMap).sort((a,b) => areaMap[b]-areaMap[a]);
+        if (charts.areaBar) charts.areaBar && charts.areaBar.destroy();
+        charts.areaBar = new Chart(document.getElementById('areaBarChart'), {
+          type:'bar',
+          data:{
+            labels: areaLabels,
+            datasets:[{ label:'Pending Items', data: areaLabels.map(a => areaMap[a]), backgroundColor:'rgba(225,29,72,.75)', borderColor:'#e11d48', borderWidth:2, borderRadius:6 }]
+          },
+          options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: ctx => ` ${ctx.parsed.y} pending items` } } }, scales:{ x:{ grid:{display:false}, ticks:{font:{family:'Inter',weight:'600'}} }, y:{ beginAtZero:true, grid:{color:'#f1f5f9'} } } }
+        });
+
+        // PR Release Status cards
+        const prCats = {};
+        excelRows.forEach(r => { const ps = r.prStatus||'Other'; prCats[ps] = (prCats[ps]||0)+1; });
+        const prGrid = document.getElementById('prReleaseStatusGrid');
+        prGrid.innerHTML = '';
+        Object.entries(prCats).sort((a,b)=>b[1]-a[1]).forEach(([cat,cnt]) => {
+          const cfg = PR_RELEASE_CONFIG[cat] || { color:'#64748b', bg:'#f1f5f9', icon:'fa-circle' };
+          const card = document.createElement('div');
+          card.style.cssText = `background:${cfg.bg};border:1.5px solid ${cfg.color}33;border-radius:14px;padding:16px;cursor:pointer;transition:.2s ease;`;
+          card.innerHTML = `<div style="font-size:.75rem;font-weight:700;color:${cfg.color};margin-bottom:8px;text-transform:uppercase;"><i class="fa-solid ${cfg.icon}"></i> ${cat}</div><div style="font-size:2rem;font-weight:800;color:${cfg.color};">${cnt}</div><div style="font-size:.72rem;color:${cfg.color}99;margin-top:4px;">items · click to view</div>`;
+          card.onmouseenter = () => { card.style.transform='translateY(-2px)'; };
+          card.onmouseleave = () => { card.style.transform=''; };
+          card.onclick = () => openPrDetailModal(cat + ' (PR Status)', excelRows.filter(r => r.prStatus === cat));
+          prGrid.appendChild(card);
+        });
+
+        // PR Release doughnut
+        if (charts.prRelease) charts.prRelease.destroy();
+        const prLabels = Object.keys(prCats);
+        const prColors2 = ['#10b981','#7c3aed','#f59e0b','#0f766e','#2563eb','#8b5cf6','#e11d48','#f97316'];
+        charts.prRelease = new Chart(document.getElementById('prReleaseChart'), {
+          type:'doughnut',
+          data:{ labels: prLabels.map(c => c+' ('+prCats[c]+')'), datasets:[{ data: prLabels.map(c=>prCats[c]), backgroundColor:prColors2.slice(0,prLabels.length), borderWidth:3, borderColor:'#fff', hoverOffset:10 }] },
+          options:{ responsive:true, maintainAspectRatio:false, cutout:'55%', plugins:{ legend:{ position:'right', labels:{ font:{family:'Inter',size:11,weight:'600'}, padding:10 } } } }
+        });
+      });
+    }
+
+    function openPrDetailModal(title, rows) {
+      prDetailRows = rows;
+      document.getElementById('prDetailModal').style.display = 'flex';
+      document.getElementById('prDetailTitle').textContent = title + ' — ' + rows.length + ' Items';
+
+      // Populate area filter
+      const areas = [...new Set(rows.map(r => r.area).filter(Boolean))].sort();
+      const areaSel = document.getElementById('prDetailAreaFilter');
+      areaSel.innerHTML = '<option value="All">All Areas</option>' + areas.map(a => `<option value="${a}">${a}</option>`).join('');
+      document.getElementById('prDetailSearch').value = '';
+
+      // Area summary chips
+      const areaMap = {};
+      rows.forEach(r => { areaMap[r.area||'OTHER'] = (areaMap[r.area||'OTHER']||0)+1; });
+      const chips = document.getElementById('prDetailAreaChips');
+      chips.innerHTML = Object.entries(areaMap).sort((a,b)=>b[1]-a[1]).map(([a,c]) =>
+        `<span onclick="document.getElementById('prDetailAreaFilter').value='${a}';filterPrDetailTable()" style="cursor:pointer;background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8;padding:4px 10px;border-radius:999px;font-size:.78rem;font-weight:700;">${a}: ${c}</span>`
+      ).join('');
+
+      filterPrDetailTable();
+    }
+
+    function filterPrDetailTable() {
+      const area   = document.getElementById('prDetailAreaFilter').value;
+      const search = document.getElementById('prDetailSearch').value.toLowerCase();
+      prDetailFiltered = prDetailRows.filter(r => {
+        const areaMatch   = area === 'All' || r.area === area;
+        const searchMatch = !search || (r.matCode+r.desc+r.prNo+r.vendor+r.purchaser).toLowerCase().includes(search);
+        return areaMatch && searchMatch;
+      });
+
+      const head = document.getElementById('prDetailHead');
+      const body = document.getElementById('prDetailBody');
+      const foot = document.getElementById('prDetailFooter');
+
+      const cols = ['#','Area','PR No','Mat Code','Description','Qty','UOM','PR Status','PO Status','RFQ No','PO No','PO Date','Delivery Date','Purchaser','Vendor'];
+      head.innerHTML = `<tr>${cols.map(c=>`<th style="background:#f8fafc;padding:10px 12px;font-size:.72rem;text-transform:uppercase;letter-spacing:.4px;color:#475569;border-bottom:2px solid #e2e8f0;white-space:nowrap;position:sticky;top:0;z-index:1;">${c}</th>`).join('')}</tr>`;
+
+      const statusColor = (s) => {
+        s = (s||'').toUpperCase();
+        if (s==='PO CREATED') return '#10b981';
+        if (s.includes('RFQ')&&s.includes('PENDING')) return '#e11d48';
+        if (s.includes('RFQ')) return '#f59e0b';
+        if (s.includes('TR')) return '#2563eb';
+        if (s.includes('PO RELEASE')||s.includes('PO RELESAE')) return '#f97316';
+        return '#64748b';
+      };
+      const prStatusColor = (s) => {
+        if (s==='PR Released') return '#10b981';
+        if (s==='With HOD') return '#7c3aed';
+        if (['Store Query','With Store'].includes(s)) return '#f59e0b';
+        if (['With Planner','With TC'].includes(s)) return '#2563eb';
+        if (s==='Zadd Pending') return '#e11d48';
+        return '#64748b';
+      };
+
+      body.innerHTML = prDetailFiltered.map((r,i) => `
+        <tr style="border-bottom:1px solid #f1f5f9;${i%2===0?'background:#fafcff;':''}">
+          <td style="padding:10px 12px;color:#64748b;font-weight:700;">${i+1}</td>
+          <td style="padding:10px 12px;"><span style="background:#eff6ff;color:#1e40af;border-radius:6px;padding:3px 8px;font-size:.75rem;font-weight:700;">${r.area||'-'}</span></td>
+          <td style="padding:10px 12px;font-weight:700;color:#0f172a;white-space:nowrap;">${r.prNo||'-'}</td>
+          <td style="padding:10px 12px;font-family:monospace;color:#1d4ed8;font-weight:700;">${r.matCode||'-'}</td>
+          <td style="padding:10px 12px;max-width:220px;color:#334155;">${r.desc||'-'}</td>
+          <td style="padding:10px 12px;text-align:center;font-weight:700;">${r.qty||'-'}</td>
+          <td style="padding:10px 12px;text-align:center;">${r.uom||'-'}</td>
+          <td style="padding:10px 12px;white-space:nowrap;"><span style="color:${prStatusColor(r.prStatus)};font-weight:700;font-size:.78rem;">${r.prStatus||'-'}</span></td>
+          <td style="padding:10px 12px;white-space:nowrap;"><span style="color:${statusColor(r.poStatus)};font-weight:700;font-size:.78rem;">${r.poStatus||'-'}</span></td>
+          <td style="padding:10px 12px;font-size:.8rem;">${r.rfqNo||'-'}</td>
+          <td style="padding:10px 12px;font-weight:700;font-size:.8rem;">${r.poNo||'-'}</td>
+          <td style="padding:10px 12px;white-space:nowrap;font-size:.8rem;">${r.poDate||'-'}</td>
+          <td style="padding:10px 12px;white-space:nowrap;font-size:.8rem;">${r.delivDate||'-'}</td>
+          <td style="padding:10px 12px;font-size:.78rem;">${r.purchaser||'-'}</td>
+          <td style="padding:10px 12px;font-size:.78rem;max-width:180px;">${r.vendor||'-'}</td>
+        </tr>
+      `).join('') || '<tr><td colspan="15" style="padding:28px;text-align:center;color:#64748b;">No records found</td></tr>';
+
+      const totalVal = prDetailFiltered.reduce((s,r)=>s+Number(r.totalValue||0),0);
+      foot.textContent = `Showing ${prDetailFiltered.length} of ${prDetailRows.length} items | Total Value: ₹${totalVal.toLocaleString('en-IN',{maximumFractionDigits:0})}`;
+    }
+
+    function exportPrDetailCSV() {
+      if (!prDetailFiltered.length) return;
+      const cols = ['Area','PR No','Mat Code','Description','Qty','UOM','PR Status','PO Status','RFQ No','PO No','PO Date','Delivery Date','Purchaser','Vendor','Total Value'];
+      const csvData = [cols.join(','), ...prDetailFiltered.map(r => [
+        r.area,r.prNo,r.matCode,'"'+r.desc.replace(/"/g,'""')+'"',r.qty,r.uom,
+        r.prStatus,r.poStatus,r.rfqNo,r.poNo,r.poDate,r.delivDate,
+        '"'+r.purchaser.replace(/"/g,'""')+'"','"'+r.vendor.replace(/"/g,'""')+'"',r.totalValue
+      ].join(','))].join('\n');
+      const blob = new Blob([csvData], {type:'text/csv'});
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = `COREX_PR_Detail_${new Date().toLocaleDateString('en-GB').replace(/\//g,'-')}.csv`;
+      a.click();
+    }
+
+    // Load persisted excel data on startup
+    function loadPersistedExcelData() {
+      try {
+        const raw = localStorage.getItem(EXCEL_KEY);
+        if (!raw) return;
+        excelRows = JSON.parse(raw);
+        if (excelRows.length) {
+          document.getElementById('excelFileInfo').textContent = `✅ ${excelRows.length} rows loaded from previous session`;
+          document.getElementById('excelFileInfo').style.display = 'block';
+          document.getElementById('clearExcelBtn').style.display = '';
+          renderExcelDashboard();
+        }
+      } catch(e) { console.warn('Excel restore failed', e); }
+    }
+
+    document.getElementById('prDetailModal').addEventListener('click', function(e) {
+      if (e.target === this) this.style.display = 'none';
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        document.getElementById('prDetailModal').style.display = 'none';
+        document.getElementById('successModal').style.display = 'none';
+        closeActionModal();
+      }
+    });
     document.getElementById('reqFiles').addEventListener('change', renderSelectedFiles);
     document.getElementById('searchInput').addEventListener('input', renderTracker);
     document.getElementById('filterStatus').addEventListener('change', renderTracker);
@@ -2009,12 +2442,6 @@
       });
     });
     document.getElementById('plannerPassword').addEventListener('keydown', e => { if(e.key === 'Enter') validatePlannerRole(); });
-    document.addEventListener('keydown', e => {
-      if(e.key === 'Escape'){
-        document.getElementById('successModal').style.display = 'none';
-        closeActionModal();
-      }
-    });
 
     /* ── App Initialization (waits for Firebase) ── */
     async function initApp(){
@@ -2045,6 +2472,7 @@
       renderTracker();
       loadAdminForm();
       refreshDashboard();
+      loadPersistedExcelData(); // restore Excel data if previously uploaded
       applyRoleAccess();
       if(!currentRole) openRoleModal();
       else activateSavedTab();
