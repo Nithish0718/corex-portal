@@ -1,0 +1,2072 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AM/NS COREX – Planning Portal V2.6</title>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Firebase SDK (compat version - works on all browsers & GitHub Pages) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script>
+    (function(){
+      const firebaseConfig = {
+        apiKey: "AIzaSyATc36GRILycxIqY5b0wSvV-_Cu1rNEx0w",
+        authDomain: "corex-portal.firebaseapp.com",
+        projectId: "corex-portal",
+        storageBucket: "corex-portal.firebasestorage.app",
+        messagingSenderId: "579574225192",
+        appId: "1:579574225192:web:0b01bd92c1e13b4c33581d",
+        measurementId: "G-PZJWMXZS7N"
+      };
+
+      try {
+        const app = firebase.initializeApp(firebaseConfig);
+        const db  = firebase.firestore();
+
+        window._fb = {
+          async saveRequest(req){
+            const toSave = { ...req, attachments: (req.attachments||[]).map(a => ({ name:a.name, type:a.type, size:a.size })) };
+            await db.collection('requests').doc(req.id).set(toSave);
+            for(const att of (req.attachments||[])){
+              if(att.dataUrl){
+                const key = req.id + '_' + att.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+                await db.collection('attachments').doc(key).set({ reqId:req.id, name:att.name, type:att.type, dataUrl:att.dataUrl });
+              }
+            }
+          },
+
+          async deleteRequest(reqId){
+            await db.collection('requests').doc(reqId).delete();
+          },
+
+          async saveDashboard(dash){
+            await db.collection('config').doc('dashboard').set(dash);
+          },
+
+          async loadDashboard(){
+            const snap = await db.collection('config').doc('dashboard').get();
+            return snap.exists ? snap.data() : null;
+          },
+
+          listenRequests(callback){
+            return db.collection('requests').onSnapshot(async snap => {
+              const reqs = [];
+              for(const d of snap.docs){
+                const req = d.data();
+                req.attachments = req.attachments || [];
+                for(let i = 0; i < req.attachments.length; i++){
+                  const key = req.id + '_' + req.attachments[i].name.replace(/[^a-zA-Z0-9._-]/g,'_');
+                  try{
+                    const attSnap = await db.collection('attachments').doc(key).get();
+                    if(attSnap.exists) req.attachments[i].dataUrl = attSnap.data().dataUrl;
+                  }catch(e){}
+                }
+                reqs.push(req);
+              }
+              reqs.sort((a,b) => b.id.localeCompare(a.id));
+              callback(reqs);
+            }, err => {
+              console.error('Firestore listener error:', err);
+              window.dispatchEvent(new CustomEvent('firebase-error', { detail: err }));
+            });
+          },
+
+          async saveRequests(reqs){
+            for(const req of reqs) await window._fb.saveRequest(req);
+          },
+
+          async clearRequests(reqIds){
+            for(const id of reqIds) await window._fb.deleteRequest(id);
+          }
+        };
+
+        window._fbReady = true;
+        window.dispatchEvent(new Event('firebase-ready'));
+        console.log('✅ Firebase connected successfully');
+      } catch(err) {
+        console.error('❌ Firebase init failed:', err);
+        window._fbReady = false;
+        window.dispatchEvent(new CustomEvent('firebase-error', { detail: err }));
+      }
+    })();
+  </script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    :root{
+      --bg:#f4f7fc;
+      --card:#ffffff;
+      --text:#334155;
+      --muted:#64748b;
+      --line:#e2e8f0;
+      --line-2:#cbd5e1;
+      --nav:#1e293b;
+      --brand:#d71920;
+      --blue:#2563eb;
+      --green:#10b981;
+      --orange:#f59e0b;
+      --red:#e11d48;
+      --dark:#0f172a;
+      --soft:#f8fafc;
+      --soft-blue:#eff6ff;
+      --yellow-bg:#fef3c7;
+      --yellow-text:#92400e;
+      --green-bg:#d1fae5;
+      --green-text:#065f46;
+      --red-bg:#fee2e2;
+      --red-text:#991b1b;
+      --violet-bg:#ede9fe;
+      --violet-text:#6d28d9;
+      --shadow:0 10px 30px rgba(15,23,42,.08);
+      --radius:14px;
+      --radius-lg:18px;
+    }
+
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{margin:0;font-family:'Inter','Segoe UI',sans-serif;background:var(--bg);color:var(--text)}
+    button,input,select,textarea{font:inherit}
+    a{color:inherit}
+
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes pulseGlow{0%,100%{box-shadow:0 0 0 0 rgba(37,99,235,.10)}50%{box-shadow:0 0 0 10px rgba(37,99,235,0)}}
+
+    .top-red-bar{position:fixed;top:0;left:0;width:100%;height:4px;background:var(--brand);z-index:1000}
+    .navbar{position:fixed;top:4px;left:0;width:100%;z-index:999;background:var(--nav);color:#fff;box-shadow:0 4px 10px rgba(0,0,0,.08)}
+    .nav-inner{max-width:1480px;margin:0 auto;padding:10px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+    .brand{display:flex;align-items:center;gap:12px;font-size:1.25rem;font-weight:800;white-space:nowrap;letter-spacing:.2px}
+    .brand i{color:var(--brand)}
+    .nav-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto}
+    .tab-btn{border:none;background:transparent;color:#94a3b8;padding:10px 16px;border-radius:10px;font-size:.95rem;font-weight:600;cursor:pointer;transition:.2s ease;display:inline-flex;align-items:center;gap:8px}
+    .tab-btn:hover{color:#fff;background:rgba(255,255,255,.06);transform:translateY(-1px)}
+    .tab-btn.active{background:var(--brand);color:#fff}
+    .profile-chip,.role-chip{color:#cbd5e1;font-size:.9rem;font-weight:500;display:flex;align-items:center;gap:8px;white-space:nowrap}
+    .role-chip{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);padding:8px 10px;border-radius:10px}
+
+    .main{max-width:1480px;margin:88px auto 0;padding:24px;animation:fadeInUp .35s ease}
+    .hidden{display:none !important}
+
+    .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-lg);box-shadow:var(--shadow);padding:22px;margin-bottom:22px;animation:fadeInUp .35s ease}
+    .card-title{margin:0 0 18px;display:flex;align-items:center;gap:10px;font-size:1.05rem;font-weight:800;color:#0f172a;text-transform:uppercase;letter-spacing:.3px}
+    .sub-title{margin:0 0 14px;font-size:.95rem;font-weight:800;color:#0f172a;display:flex;align-items:center;gap:10px}
+    .muted{color:var(--muted)}
+    .help-text{font-size:.82rem;color:var(--muted)}
+    .empty{text-align:center;padding:28px 16px;color:var(--muted)}
+
+    .kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px;margin-bottom:22px}
+    .kpi{position:relative;overflow:hidden;background:#fff;border:1px solid var(--line);border-radius:var(--radius-lg);box-shadow:var(--shadow);padding:22px;min-height:108px;transition:.2s ease}
+    .kpi:hover{transform:translateY(-2px)}
+    .kpi::before{content:'';position:absolute;top:0;left:0;width:5px;height:100%;border-radius:14px 0 0 14px;background:var(--blue)}
+    .kpi.green::before{background:var(--green)}
+    .kpi.orange::before{background:var(--orange)}
+    .kpi.red::before{background:var(--red)}
+    .kpi-label{font-size:.8rem;color:var(--muted);text-transform:uppercase;font-weight:700;margin-bottom:12px;letter-spacing:.35px}
+    .kpi-value{font-size:2rem;font-weight:800;color:#123b74;line-height:1.1}
+    .kpi-icon{position:absolute;right:18px;top:50%;transform:translateY(-50%);font-size:3rem;opacity:.08}
+    .kpi.blue .kpi-icon{color:var(--blue)}
+    .kpi.green .kpi-icon{color:var(--green)}
+    .kpi.orange .kpi-icon{color:var(--orange)}
+    .kpi.red .kpi-icon{color:var(--red)}
+
+    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+    .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+    .chart-wrap{position:relative;min-height:340px;width:100%;padding:8px 0 4px}
+    .chart-wrap canvas{border-radius:10px}
+
+    .section-card{background:#fff;border:1px solid #eef2f7;border-top:4px solid var(--brand);border-radius:18px;box-shadow:var(--shadow);padding:22px;margin-bottom:24px;animation:fadeInUp .35s ease}
+    .section-title{font-size:1rem;font-weight:800;margin:0 0 18px;color:#0f172a;display:flex;align-items:center;gap:10px}
+    .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+    .form-grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}
+    .field{display:flex;flex-direction:column;gap:8px}
+    .field.full{grid-column:1 / -1}
+    label{font-size:.88rem;font-weight:600;color:#475569}
+    input,select,textarea{width:100%;padding:12px 14px;border:1px solid var(--line-2);border-radius:12px;color:#0f172a;background:#fff;outline:none;transition:border-color .15s ease, box-shadow .15s ease, background-color .15s ease}
+    input:focus,select:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.10)}
+    input[readonly]{background:#f8fafc;color:#64748b}
+    textarea{min-height:112px;resize:vertical}
+    .input-error{border-color:#ef4444 !important;box-shadow:0 0 0 3px rgba(239,68,68,.12) !important;background:#fff8f8}
+    .field-help{font-size:.78rem;color:#ef4444;display:none}
+    .field-help.show{display:block}
+
+    .btn-row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:14px}
+    .btn{border:none;border-radius:12px;padding:11px 16px;font-size:.92rem;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:transform .08s ease, opacity .2s ease, filter .2s ease;text-decoration:none}
+    .btn:hover{filter:brightness(1.02)}
+    .btn:active{transform:translateY(1px)}
+    .btn.primary{background:var(--nav);color:#fff}
+    .btn.blue{background:var(--soft-blue);color:var(--blue);border:1px dashed #93c5fd}
+    .btn.green{background:var(--green);color:#fff}
+    .btn.orange{background:#fef3c7;color:#92400e;border:1px solid #fcd34d}
+    .btn.gray{background:#eef2f7;color:#334155;border:1px solid #d8e1eb}
+    .btn.red{background:var(--red);color:#fff}
+    .btn.white{background:#fff;color:#334155;border:1px solid var(--line)}
+    .btn.sm{padding:8px 12px;font-size:.82rem;border-radius:10px}
+    .btn.block{width:100%}
+    .btn.switch-role{animation:pulseGlow 2.5s infinite}
+    .btn.delete-line{padding:8px 10px;font-size:.8rem;border-radius:10px;color:#b91c1c;background:#fff1f2;border:1px solid #fecdd3;white-space:nowrap}
+
+    .table-shell{width:100%;overflow:auto;border:1px solid var(--line);border-radius:14px;background:#fff}
+    table{width:100%;border-collapse:collapse;min-width:1120px;font-size:.88rem}
+    th,td{padding:12px 14px;border-bottom:1px solid #edf2f7;text-align:left;vertical-align:middle}
+    th{background:#f8fafc;font-size:.74rem;text-transform:uppercase;letter-spacing:.45px;color:#475569;position:sticky;top:0;z-index:1}
+    tbody tr:hover{background:#fafcff}
+
+    .erp-table{min-width:1240px}
+    .erp-table tbody tr{background:#fbfdff}
+    .erp-table td{padding:10px 8px}
+    .erp-table input,.erp-table select{padding:10px 10px;border-radius:10px}
+    .erp-table .col-sr{width:46px;text-align:center;font-weight:700;color:#1e293b}
+
+    .status{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.35px}
+    .status.pending{background:var(--yellow-bg);color:var(--yellow-text)}
+    .status.approved{background:var(--green-bg);color:var(--green-text)}
+    .status.returned{background:#fff7ed;color:#c2410c}
+    .status.rejected{background:var(--red-bg);color:var(--red-text)}
+    .status.mixed{background:var(--violet-bg);color:var(--violet-text)}
+
+    .type-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;font-size:.75rem;font-weight:700;background:#eff6ff;color:#1d4ed8;text-transform:uppercase}
+    .type-badge.emergency,.type-badge.breakdown{background:#fef2f2;color:#b91c1c}
+    .row-emergency td{background:#fff7f7}
+
+    .toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+    .toolbar-left,.toolbar-right{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    .toolbar input,.toolbar select{min-width:180px}
+
+    .request-card{border:1px solid var(--line);border-radius:18px;background:#fff;box-shadow:var(--shadow);padding:16px 16px 8px 16px;margin-bottom:18px;animation:fadeInUp .35s ease}
+    .request-head{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+    .request-title{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:1rem;font-weight:800;color:#0f172a}
+    .request-meta{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .request-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
+    .chip{display:inline-flex;align-items:center;gap:8px;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;padding:8px 10px;border-radius:10px;font-size:.82rem;font-weight:700}
+    .chip.warn{background:#fef2f2;color:#b91c1c;border-color:#fecaca}
+    .biz-box{background:#f8fafc;border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-bottom:12px;font-size:.88rem}
+    .attachment-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    .attachment-link{display:inline-flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;background:#fff;border:1px solid #cbd5e1;color:#0f172a;text-decoration:none;font-size:.82rem;font-weight:600}
+    .attachment-link:hover{background:#eff6ff;color:#1d4ed8;border-color:#93c5fd}
+
+    .material-link{background:none;border:none;padding:0;color:#123b74;font-weight:800;text-decoration:underline;cursor:pointer}
+    .planner-shell{display:grid;grid-template-columns:1.15fr .85fr;gap:22px}
+    .context-box{background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid var(--blue);padding:14px;border-radius:14px;margin-bottom:16px}
+    .remark-box{background:#fff7ed;border:1px solid #fdba74;border-left:4px solid var(--orange);padding:14px;border-radius:14px}
+    .danger-box{background:#fef2f2;border:1px solid #fecaca;border-left:4px solid var(--red);padding:12px;border-radius:14px;margin-bottom:14px}
+    .success-box{background:#ecfdf5;border:1px solid #a7f3d0;border-left:4px solid var(--green);padding:12px;border-radius:14px;margin-bottom:14px}
+    .info-box{background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid var(--blue);padding:12px;border-radius:14px;margin-bottom:14px}
+    .attachment-panel{margin-top:12px}
+
+    .upload-box{border:2px dashed #cbd5e1;border-radius:14px;background:#f8fafc;padding:18px}
+    .file-list{margin-top:10px;padding-left:18px;color:#334155;font-size:.86rem}
+
+    .modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:center;justify-content:center;z-index:3000;padding:20px;backdrop-filter:blur(4px)}
+    .modal{width:min(520px,100%);background:#fff;border-radius:18px;padding:28px;box-shadow:0 20px 60px rgba(15,23,42,.28);text-align:center;animation:fadeInUp .25s ease}
+    .modal-icon{font-size:3rem;color:#10b981;margin-bottom:12px}
+    .modal-title{margin:0 0 10px;color:#0f172a;font-size:1.25rem}
+    .modal-text{margin:0 0 20px;color:#64748b;line-height:1.5}
+    .modal-actions{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
+    .action-modal .modal{text-align:left;width:min(700px,100%)}
+    .action-modal .modal-icon{color:var(--blue)}
+
+    .role-modal .modal{max-width:620px}
+    .role-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}
+    .role-card{border:1px solid var(--line);border-radius:16px;padding:18px;background:#fff;text-align:left;cursor:pointer;transition:.2s ease}
+    .role-card:hover{transform:translateY(-2px);border-color:#93c5fd;box-shadow:var(--shadow)}
+    .role-card h4{margin:0 0 8px;font-size:1rem;color:#0f172a}
+    .role-card p{margin:0;color:var(--muted);font-size:.88rem;line-height:1.5}
+    .password-panel{margin-top:16px;padding:16px;border-radius:14px;background:#f8fafc;border:1px solid var(--line)}
+    .password-note{font-size:.8rem;color:#b45309;margin-top:8px}
+
+    .budget-summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px}
+    .budget-mini-card{background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:12px}
+    .budget-mini-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0}
+    .budget-mini-label{font-size:.78rem;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
+    .budget-mini-value{font-size:1.15rem;font-weight:800;color:#0f172a}
+    .utilization-bar{width:100%;height:8px;background:#e2e8f0;border-radius:999px;margin-top:10px;overflow:hidden}
+    .utilization-fill{height:100%;border-radius:999px;transition:width .6s ease}
+    tbody tr:nth-child(odd){background:#fafcff}
+    tbody tr:nth-child(even){background:#ffffff}
+    @media (max-width:760px){.budget-summary-grid{grid-template-columns:1fr}}
+      .grid-2,.planner-shell,.role-grid{grid-template-columns:1fr}
+    }
+    @media (max-width:1100px){
+      .kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .form-grid,.form-grid-4{grid-template-columns:1fr}
+      .profile-chip{display:none}
+    }
+    @media (max-width:680px){
+      .main{padding:16px;margin-top:98px}
+      .nav-inner{padding:10px 16px}
+      .brand{font-size:1.05rem}
+      .kpi-grid,.grid-3{grid-template-columns:1fr}
+      .tab-btn{padding:9px 12px;font-size:.88rem}
+      .toolbar input,.toolbar select{min-width:unset;width:100%}
+      .toolbar-left,.toolbar-right{width:100%}
+      .section-card,.card{padding:16px}
+      .modal-actions .btn{width:100%}
+    }
+  </style>
+</head>
+<body>
+  <div class="top-red-bar"></div>
+
+  <header class="navbar">
+    <div class="nav-inner">
+      <div class="brand"><i class="fa-solid fa-industry"></i><span>AM/NS COREX MECH</span></div>
+      <div class="nav-actions">
+        <button class="tab-btn active" data-tab-btn data-role="all" onclick="switchTab('dash', this)"><i class="fa-solid fa-chart-line"></i> Dashboard</button>
+        <button class="tab-btn" data-tab-btn data-role="all" onclick="switchTab('req', this)"><i class="fa-solid fa-file-invoice"></i> Material Request</button>
+        <button class="tab-btn" data-tab-btn data-role="planner" onclick="switchTab('track', this)"><i class="fa-solid fa-list-check"></i> Tracker</button>
+        <button class="tab-btn" data-tab-btn data-role="planner" onclick="switchTab('planner', this)"><i class="fa-solid fa-user-gear"></i> Planning Data Entry</button>
+        <button class="tab-btn" data-tab-btn data-role="planner" onclick="switchTab('admin', this)"><i class="fa-solid fa-lock"></i> Admin Entry</button>
+        <button class="btn white sm switch-role" type="button" onclick="openRoleModal(true)"><i class="fa-solid fa-users"></i> Switch Role</button>
+        <div class="role-chip"><i class="fa-solid fa-shield"></i> <span id="roleLabel">Role: Not Selected</span></div>
+        <div class="profile-chip"><i class="fa-regular fa-circle-user"></i> Nithish | Mechanical Planning</div>
+        <div class="role-chip" id="syncChip" style="background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.3);color:#f59e0b;"><i class="fa-solid fa-cloud fa-spin"></i> <span id="syncLabel">Connecting...</span></div>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+    <section id="dash" class="tab-panel">
+      <div class="kpi-grid">
+        <div class="kpi blue"><div class="kpi-label">CY26 Allocated Budget</div><div class="kpi-value" id="kBudgetTotal">10.96 CR</div><i class="fa-solid fa-sack-dollar kpi-icon"></i></div>
+        <div class="kpi green"><div class="kpi-label">Till Date Consumption</div><div class="kpi-value" id="kBudgetUsed">2.30 CR</div><i class="fa-solid fa-chart-pie kpi-icon"></i></div>
+        <div class="kpi orange"><div class="kpi-label">Balance Fund Available</div><div class="kpi-value" id="kBudgetBal">8.66 CR</div><i class="fa-solid fa-scale-unbalanced kpi-icon"></i></div>
+        <div class="kpi red"><div class="kpi-label">Total PO Created (YTD)</div><div class="kpi-value" id="kPoTotal">1,723</div><i class="fa-solid fa-file-contract kpi-icon"></i></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title"><i class="fa-solid fa-bars-progress"></i> PR-PO Status List (<span id="prPoTitleTotal">0</span>)</h3>
+          <div class="chart-wrap"><canvas id="prPoChart"></canvas></div>
+        </div>
+        <div class="card">
+          <h3 class="card-title"><i class="fa-solid fa-timeline"></i> PR Release Status (<span id="prReleaseTitleTotal">0</span>)</h3>
+          <div class="chart-wrap"><canvas id="prReleaseChart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3 class="card-title"><i class="fa-solid fa-chart-pie"></i> Budget Consumed (Spares % by Area)</h3>
+          <div class="chart-wrap"><canvas id="budgetPieChart"></canvas></div>
+        </div>
+        <div class="card">
+          <h3 class="card-title"><i class="fa-solid fa-building"></i> Budget Consumed (In Crores)</h3>
+          <div class="chart-wrap"><canvas id="budgetBarChart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><i class="fa-solid fa-table"></i> CY26 Area-Wise Budget Tracking (In CR)</h3>
+        <div class="table-shell">
+          <table>
+            <thead>
+              <tr>
+                <th>Details</th>
+                <th>HYD</th>
+                <th>MH</th>
+                <th>Operation</th>
+                <th>PH</th>
+                <th>Shift</th>
+                <th>Store</th>
+                <th>Tower</th>
+                <th>Capex</th>
+                <th>Grand Total</th>
+              </tr>
+            </thead>
+            <tbody id="budgetTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title"><i class="fa-solid fa-signal"></i> Workflow Quick Summary</h3>
+        <div class="grid-3">
+          <div class="biz-box"><strong>Pending Items:</strong> <span id="sumPending">0</span></div>
+          <div class="biz-box"><strong>Approved Items:</strong> <span id="sumApproved">0</span></div>
+          <div class="biz-box"><strong>Returned / Rejected:</strong> <span id="sumReject">0</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="req" class="tab-panel hidden">
+      <form id="requestForm" novalidate>
+        <div class="section-card">
+          <h3 class="section-title"><i class="fa-solid fa-circle-info"></i> 1. General Information</h3>
+          <div class="form-grid">
+            <div class="field">
+              <label for="reqName">Requested By</label>
+              <input id="reqName" type="text" value="Field Engineer" placeholder="Enter requester name" required />
+              <div class="field-help" id="helpReqName">Requester name is required.</div>
+            </div>
+            <div class="field">
+              <label for="reqArea">Operational Area</label>
+              <select id="reqArea" required>
+                <option value="">Select an area...</option>
+                <option value="TOWER">TOWER</option>
+                <option value="MH">MH</option>
+                <option value="STORE">STORE</option>
+                <option value="PH">PH</option>
+                <option value="HYD">HYD</option>
+                <option value="SHIFT">SHIFT</option>
+              </select>
+              <div class="field-help" id="helpReqArea">Operational area is required.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-card">
+          <h3 class="section-title"><i class="fa-solid fa-cubes"></i> 2. Requisition Line Items</h3>
+          <div class="table-shell">
+            <table class="erp-table">
+              <thead>
+                <tr>
+                  <th class="col-sr">#</th>
+                  <th>MAT. CODE (9 DIGITS)</th>
+                  <th>DESCRIPTION</th>
+                  <th>SPARE TYPE</th>
+                  <th>UOM</th>
+                  <th>PR QTY</th>
+                  <th>INSTALLED</th>
+                  <th>SITE STOCK</th>
+                  <th>LOCATION</th>
+                  <th style="text-align:center;min-width:120px;">ACT</th>
+                </tr>
+              </thead>
+              <tbody id="itemRows"></tbody>
+            </table>
+          </div>
+          <div style="margin-top:14px; display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+            <button type="button" class="btn blue" onclick="addLineItem()"><i class="fa-solid fa-plus"></i> Add Line Item</button>
+            <span class="chip"><i class="fa-solid fa-circle-info"></i> Multiple materials can be submitted in one request.</span>
+          </div>
+        </div>
+
+        <div class="section-card">
+          <h3 class="section-title"><i class="fa-solid fa-file-signature"></i> 3. Business Case &amp; Justification</h3>
+          <div class="form-grid">
+            <div class="field">
+              <label for="reqNeed">What is the need for these materials?</label>
+              <textarea id="reqNeed" required></textarea>
+              <div class="field-help" id="helpReqNeed">Need / purpose is required.</div>
+            </div>
+            <div class="field">
+              <label for="reqCalc">How is the PR quantity decided?</label>
+              <textarea id="reqCalc" required></textarea>
+              <div class="field-help" id="helpReqCalc">Quantity basis is required.</div>
+            </div>
+            <div class="field">
+              <label for="reqRisk">What is the risk of non-availability?</label>
+              <textarea id="reqRisk" required></textarea>
+              <div class="field-help" id="helpReqRisk">Risk details are required.</div>
+            </div>
+            <div class="field">
+              <label for="reqAlt">Any other alternative or failure details?</label>
+              <textarea id="reqAlt" required></textarea>
+              <div class="field-help" id="helpReqAlt">Alternative or failure details are required.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-card">
+          <h3 class="section-title"><i class="fa-solid fa-paperclip"></i> 4. Supporting Documents</h3>
+          <div class="upload-box">
+            <input id="reqFiles" type="file" multiple />
+            <div class="help-text">Attach vendor quote, failure photo, old material details, or approval note. Files are stored in browser for prototype viewing and download.</div>
+            <ul id="fileList" class="file-list"></ul>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button type="submit" class="btn primary"><i class="fa-solid fa-arrow-right"></i> Submit to Planning Review</button>
+          <button type="button" class="btn gray" onclick="resetRequestForm()"><i class="fa-solid fa-rotate-left"></i> Reset Form</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="track" class="tab-panel hidden">
+      <div class="card">
+        <h3 class="card-title"><i class="fa-solid fa-list-check"></i> Procurement Tracker</h3>
+        <div class="toolbar">
+          <div class="toolbar-left">
+            <input id="searchInput" type="text" placeholder="Search by Request ID, material code, description or requester" />
+            <select id="filterStatus">
+              <option value="All">All Status</option>
+              <option value="Pending Review">Pending Review</option>
+              <option value="Approved">Approved</option>
+              <option value="Returned">Returned</option>
+              <option value="Rejected">Rejected</option>
+            </select>
+            <select id="filterType">
+              <option value="All">All Types</option>
+              <option value="Preventive">Preventive</option>
+              <option value="Breakdown">Breakdown</option>
+              <option value="Emergency">Emergency</option>
+              <option value="Consumable">Consumable</option>
+            </select>
+          </div>
+          <div class="toolbar-right">
+            <button class="btn gray" type="button" onclick="exportCSV()"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
+            <button class="btn primary" type="button" onclick="exportApprovalSheet()"><i class="fa-solid fa-file-export"></i> Export Approval Readiness Sheet</button>
+            <button class="btn blue" type="button" onclick="seedDemoData()"><i class="fa-solid fa-wand-magic-sparkles"></i> Load Demo Data</button>
+            <button class="btn red" type="button" onclick="clearAllData()"><i class="fa-solid fa-trash"></i> Clear All</button>
+          </div>
+        </div>
+        <div id="trackerWrap"></div>
+      </div>
+    </section>
+
+    <section id="planner" class="tab-panel hidden">
+      <div class="card" id="plannerEmptyCard">
+        <h3 class="card-title"><i class="fa-solid fa-user-gear"></i> Planning Data Entry</h3>
+        <div class="biz-box">Select a <strong>material code</strong> from the Tracker tab to open single line item review. You can approve, return, or reject only that line item. Business Case &amp; Justification and attachments will also appear here for easy decision-making.</div>
+      </div>
+
+      <div class="card hidden" id="plannerPanel">
+        <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+          <h3 class="card-title" style="margin:0;"><i class="fa-solid fa-user-gear"></i> Planning Data Entry (<span id="plannerReqId">REQ-000</span>)</h3>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button type="button" class="btn primary" onclick="exportApprovalSheet(plannerContext.requestId)"><i class="fa-solid fa-file-export"></i> Export This Request</button>
+            <button type="button" class="btn gray" onclick="closePlannerPanel()"><i class="fa-solid fa-xmark"></i> Close</button>
+          </div>
+        </div>
+
+        <div class="planner-shell">
+          <div>
+            <div class="context-box">
+              <div class="sub-title"><i class="fa-solid fa-file-invoice"></i> Request Context &amp; Justification</div>
+              <div class="form-grid">
+                <div class="field"><label>Material Code</label><input id="ctxMatCode" readonly></div>
+                <div class="field"><label>Description</label><input id="ctxDesc" readonly></div>
+                <div class="field"><label>Request Area</label><input id="ctxArea" readonly></div>
+                <div class="field"><label>Current Line Status</label><input id="ctxStatus" readonly></div>
+              </div>
+              <div class="biz-box" style="margin-top:12px;"><strong>Need:</strong> <span id="ctxNeed"></span></div>
+              <div class="biz-box"><strong>Qty Logic:</strong> <span id="ctxCalc"></span></div>
+              <div class="biz-box"><strong>Risk:</strong> <span id="ctxRisk"></span></div>
+              <div class="biz-box"><strong>Alternative / Failure Details:</strong> <span id="ctxAlt"></span></div>
+              <div class="attachment-panel">
+                <div class="sub-title" style="font-size:.9rem;margin-top:12px;"><i class="fa-solid fa-paperclip"></i> Attachments</div>
+                <div id="plannerAttachments" class="attachment-list"></div>
+              </div>
+            </div>
+
+            <div class="section-card" style="border-top-color: var(--dark);">
+              <h3 class="section-title" style="color:var(--brand)"><i class="fa-solid fa-database"></i> Planner Inputs (SAP Analysis Data)</h3>
+              <div class="form-grid-4">
+                <div class="field"><label>User PR Qty</label><input id="plUserQty" readonly></div>
+                <div class="field"><label>Reviewed Qty (Planner)</label><input id="plReviewQty" type="number" step="1" min="0"></div>
+                <div class="field"><label>Installed Qty (Planner Review)</label><input id="plInstalled" type="number" step="1" min="0"></div>
+                <div class="field"><label>Site Store Stock (Planner Review)</label><input id="plSiteStock" type="number" step="1" min="0"></div>
+                <div class="field"><label>UOM (Planner Review)</label>
+                  <select id="plUom">
+                    <option value="NO">NO</option>
+                    <option value="SET">SET</option>
+                    <option value="ROL">ROL</option>
+                    <option value="KG">KG</option>
+                  </select>
+                </div>
+                <div class="field"><label>Unit Value (INR)</label><input id="plUnitValue" type="number" step="0.01" min="0"></div>
+                <div class="field"><label>Total Value (INR)</label><input id="plTotalValue" readonly></div>
+                <div class="field"><label>Central Store Stock</label><input id="plCentralStock" type="number" step="1" min="0"></div>
+                <div class="field"><label>Total Stock</label><input id="plTotalStock" readonly></div>
+                <div class="field"><label>Open PR Qty.</label><input id="plOpenPr" type="number" step="1" min="0"></div>
+                <div class="field"><label>Open PO Qty.</label><input id="plOpenPo" type="number" step="1" min="0"></div>
+                <div class="field"><label>2025-CONS</label><input id="plCons2025" type="number" step="0.01" min="0"></div>
+                <div class="field"><label>2024-CONS</label><input id="plCons2024" type="number" step="0.01" min="0"></div>
+                <div class="field"><label>2023-CONS</label><input id="plCons2023" type="number" step="0.01" min="0"></div>
+                <div class="field"><label>Installed Location</label><input id="plInstalledLocation" type="text"></div>
+              </div>
+              <div class="help-text" style="margin-top:12px;">Planner can review and change quantity, installed quantity, site stock, UOM, and location based on actual requirement. Total Value is calculated using <strong>Reviewed Qty × Unit Value (INR)</strong>.</div>
+            </div>
+          </div>
+
+          <div>
+            <div class="remark-box">
+              <div class="sub-title" style="color:#c2410c;"><i class="fa-solid fa-rotate-left"></i> Planner Remarks</div>
+              <textarea id="plRemarks" placeholder="Type reason for return or rejection. Example: Installed quantity not matching, wrong code, missing budget approval, insufficient justification..."></textarea>
+              <div class="help-text" style="margin-top:10px;">Remarks are mandatory for <strong>Return</strong> and <strong>Reject</strong>. Remarks are optional for <strong>Approve</strong>.</div>
+            </div>
+
+            <div id="plannerStatusBox" style="margin-top:16px;"></div>
+
+            <div class="btn-row" style="justify-content:stretch;margin-top:16px;">
+              <button class="btn orange block" type="button" onclick="openActionModal('Returned')"><i class="fa-solid fa-rotate-left"></i> Return This Line</button>
+              <button class="btn red block" type="button" onclick="openActionModal('Rejected')"><i class="fa-solid fa-ban"></i> Reject This Line</button>
+              <button class="btn green block" type="button" onclick="openActionModal('Approved')"><i class="fa-solid fa-check-double"></i> Approve This Line</button>
+            </div>
+
+            <div class="biz-box" style="margin-top:16px;">
+              <strong>Tip:</strong> This tab acts on only the selected line item. If one line is wrong, you can return or reject only that line without affecting the other line items in the same request.
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="admin" class="tab-panel hidden">
+      <div class="card">
+        <h3 class="card-title"><i class="fa-solid fa-lock"></i> Admin Entry – Dashboard Master Data</h3>
+        <div class="biz-box">Use this tab to update the dashboard numbers and chart data. These values will immediately reflect on the Dashboard tab.</div>
+
+        <div class="section-card">
+          <h3 class="section-title"><i class="fa-solid fa-sack-dollar"></i> KPI Cards</h3>
+          <div class="form-grid-4">
+            <div class="field"><label>CY26 Allocated Budget (CR)</label><input id="adBudgetTotal" type="number" step="0.01"></div>
+            <div class="field"><label>Till Date Consumption (CR)</label><input id="adBudgetUsed" type="number" step="0.01"></div>
+            <div class="field"><label>Balance Fund Available (CR)</label><input id="adBudgetBal" type="number" step="0.01"></div>
+            <div class="field"><label>Total PO Created (YTD)</label><input id="adPoTotal" type="number" step="1"></div>
+          </div>
+        </div>
+
+        <div class="section-card">
+          <h3 class="section-title"><i class="fa-solid fa-bars-progress"></i> PR-PO Status List</h3>
+          <div class="form-grid-4">
+            <div class="field"><label>RFQ Pending</label><input id="adPrPo_rfqPending" type="number" step="1"></div>
+            <div class="field"><label>RFQ Created</label><input id="adPrPo_rfqCreated" type="number" step="1"></div>
+            <div class="field"><label>TR Submitted</label><input id="adPrPo_trSub" type="number" step="1"></div>
+            <div class="field"><label>PO Pending</label><input id="adPrPo_poPending" type="number" step="1"></div>
+            <div class="field"><label>PO Created</label><input id="adPrPo_poCreated" type="number" step="1"></div>
+          </div>
+        </div>
+
+        <div class="section-card">
+          <h3 class="section-title"><i class="fa-solid fa-timeline"></i> PR Release Status</h3>
+          <div class="form-grid-4">
+            <div class="field"><label>PR Released</label><input id="adPrRel_prReleased" type="number" step="1"></div>
+            <div class="field"><label>With HOD</label><input id="adPrRel_withHod" type="number" step="1"></div>
+            <div class="field"><label>Store Query</label><input id="adPrRel_storeQuery" type="number" step="1"></div>
+            <div class="field"><label>With Store</label><input id="adPrRel_withStore" type="number" step="1"></div>
+            <div class="field"><label>With Planner</label><input id="adPrRel_withPlanner" type="number" step="1"></div>
+            <div class="field"><label>With TC</label><input id="adPrRel_withTc" type="number" step="1"></div>
+          </div>
+        </div>
+
+        <div class="section-card">
+          <h3 class="section-title"><i class="fa-solid fa-building"></i> Area-Wise Budget Data (CR)</h3>
+          <div class="form-grid-4">
+            <div class="field"><label>Allocation – HYD</label><input id="adAlloc_hyd" type="number" step="0.01"></div>
+            <div class="field"><label>Allocation – MH</label><input id="adAlloc_mh" type="number" step="0.01"></div>
+            <div class="field"><label>Allocation – Operation</label><input id="adAlloc_operation" type="number" step="0.01"></div>
+            <div class="field"><label>Allocation – PH</label><input id="adAlloc_ph" type="number" step="0.01"></div>
+            <div class="field"><label>Allocation – Shift</label><input id="adAlloc_shift" type="number" step="0.01"></div>
+            <div class="field"><label>Allocation – Store</label><input id="adAlloc_store" type="number" step="0.01"></div>
+            <div class="field"><label>Allocation – Tower</label><input id="adAlloc_tower" type="number" step="0.01"></div>
+            <div class="field"><label>Allocation – Capex</label><input id="adAlloc_capex" type="number" step="0.01"></div>
+            <div class="field"><label>Consumption – HYD</label><input id="adCons_hyd" type="number" step="0.01"></div>
+            <div class="field"><label>Consumption – MH</label><input id="adCons_mh" type="number" step="0.01"></div>
+            <div class="field"><label>Consumption – Operation</label><input id="adCons_operation" type="number" step="0.01"></div>
+            <div class="field"><label>Consumption – PH</label><input id="adCons_ph" type="number" step="0.01"></div>
+            <div class="field"><label>Consumption – Shift</label><input id="adCons_shift" type="number" step="0.01"></div>
+            <div class="field"><label>Consumption – Store</label><input id="adCons_store" type="number" step="0.01"></div>
+            <div class="field"><label>Consumption – Tower</label><input id="adCons_tower" type="number" step="0.01"></div>
+            <div class="field"><label>Consumption – Capex</label><input id="adCons_capex" type="number" step="0.01"></div>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button type="button" class="btn primary" onclick="saveAdminData()"><i class="fa-solid fa-cloud-arrow-up"></i> Save &amp; Deploy to Dashboard</button>
+          <button type="button" class="btn gray" onclick="loadAdminForm()"><i class="fa-solid fa-rotate-left"></i> Reload Current Values</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal-overlay" id="successModal">
+    <div class="modal">
+      <div class="modal-icon"><i class="fa-solid fa-circle-check"></i></div>
+      <h3 class="modal-title">Request Submitted</h3>
+      <p class="modal-text">The request has been saved successfully and moved to the Tracker for planning review.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn primary" onclick="closeSuccessModal()"><i class="fa-solid fa-check"></i> OK</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay action-modal" id="actionModal">
+    <div class="modal">
+      <div class="modal-icon"><i class="fa-solid fa-circle-question"></i></div>
+      <h3 class="modal-title" id="actionModalTitle">Confirm Action</h3>
+      <p class="modal-text" id="actionModalText">Please review the selected line item before continuing.</p>
+      <div class="biz-box" id="actionModalSummary"></div>
+      <div class="modal-actions" style="justify-content:flex-end;">
+        <button type="button" class="btn gray" onclick="closeActionModal()"><i class="fa-solid fa-xmark"></i> Cancel</button>
+        <button type="button" class="btn primary" id="actionModalConfirmBtn" onclick="confirmPlannerAction()"><i class="fa-solid fa-check"></i> Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay role-modal" id="roleModal">
+    <div class="modal">
+      <div class="modal-icon" style="color:#2563eb;"><i class="fa-solid fa-user-shield"></i></div>
+      <h3 class="modal-title">Select Access Role</h3>
+      <p class="modal-text">Choose how you want to enter the portal. <strong>User</strong> will only see Dashboard and Material Request. <strong>Planner</strong> will access all tabs after password validation.</p>
+      <div class="role-grid">
+        <button class="role-card" type="button" onclick="chooseRole('user')">
+          <h4><i class="fa-solid fa-user"></i> User Access</h4>
+          <p>Visible tabs: <strong>Dashboard</strong> and <strong>Material Request</strong> only.</p>
+        </button>
+        <button class="role-card" type="button" onclick="showPlannerPasswordPanel()">
+          <h4><i class="fa-solid fa-user-gear"></i> Planner Access</h4>
+          <p>Visible tabs: <strong>Dashboard</strong>, <strong>Material Request</strong>, <strong>Tracker</strong>, <strong>Planning Data Entry</strong>, and <strong>Admin Entry</strong>.</p>
+        </button>
+      </div>
+      <div class="password-panel hidden" id="plannerPasswordPanel">
+        <div class="field">
+          <label for="plannerPassword">Planner Password</label>
+          <input id="plannerPassword" type="password" placeholder="Enter planner password" />
+        </div>
+        <div class="password-note">Prototype password is set as requested for demo use.</div>
+        <div class="modal-actions" style="justify-content:flex-end;margin-top:14px;">
+          <button type="button" class="btn gray" onclick="hidePlannerPasswordPanel()"><i class="fa-solid fa-arrow-left"></i> Back</button>
+          <button type="button" class="btn primary" onclick="validatePlannerRole()"><i class="fa-solid fa-unlock"></i> Enter as Planner</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const TAB_KEY  = 'corexPortalV26_activeTab';
+    const ROLE_KEY = 'corexPortalV26_role';
+    const PLANNER_PASSWORD = 'Welcome@2026';
+
+    const defaultDashboard = {
+      kpi: { budgetTotal: 10.96, budgetUsed: 2.30, budgetBal: 8.66, poTotal: 1723 },
+      prPo: { rfqPending: 54, rfqCreated: 21, trSub: 44, poPending: 5, poCreated: 1723 },
+      prRelease: { prReleased: 1827, withHod: 55, storeQuery: 17, withStore: 16, withPlanner: 4, withTc: 3 },
+      areas: {
+        allocation: { hyd: 1.25, mh: 2.45, operation: 0.06, ph: 0.58, shift: 0.02, store: 0.77, tower: 3.99, capex: 1.85 },
+        consumption: { hyd: 0.06, mh: 0.61, operation: 0.00, ph: 0.10, shift: 0.00, store: 0.07, tower: 1.46, capex: 0.00 }
+      }
+    };
+
+    function freshState(){
+      return { requests: [], dashboard: JSON.parse(JSON.stringify(defaultDashboard)) };
+    }
+
+    let state = freshState();
+    let chartLibLoaded = false;
+    let charts = { prPo:null, prRelease:null, budgetPie:null, budgetBar:null };
+    let plannerContext = { requestId:null, itemId:null };
+    let pendingPlannerAction = null;
+    let currentRole = localStorage.getItem(ROLE_KEY) || '';
+    let _fbUnsubscribe = null;
+
+    /* ── Sync status UI ── */
+    function setSyncStatus(status, text){
+      const chip  = document.getElementById('syncChip');
+      const label = document.getElementById('syncLabel');
+      if(!chip) return;
+      const styles = {
+        connecting: { bg:'rgba(245,158,11,.15)', border:'rgba(245,158,11,.3)', color:'#f59e0b', icon:'fa-cloud fa-spin' },
+        online:     { bg:'rgba(16,185,129,.15)', border:'rgba(16,185,129,.3)', color:'#10b981', icon:'fa-cloud-arrow-up' },
+        saving:     { bg:'rgba(37,99,235,.15)',  border:'rgba(37,99,235,.3)',  color:'#2563eb', icon:'fa-spinner fa-spin' },
+        error:      { bg:'rgba(225,29,72,.15)',  border:'rgba(225,29,72,.3)',  color:'#e11d48', icon:'fa-cloud-exclamation' }
+      };
+      const s = styles[status] || styles.connecting;
+      chip.style.background   = s.bg;
+      chip.style.borderColor  = s.border;
+      chip.style.color        = s.color;
+      chip.querySelector('i').className = `fa-solid ${s.icon}`;
+      label.textContent = text;
+    }
+
+    /* ── Firebase: save one request ── */
+    async function saveState(reqId){
+      if(!window._fbReady){ return; }
+      setSyncStatus('saving', 'Saving...');
+      try{
+        if(reqId){
+          const req = state.requests.find(r => r.id === reqId);
+          if(req) await window._fb.saveRequest(req);
+        } else {
+          // save dashboard config only
+          await window._fb.saveDashboard(state.dashboard);
+        }
+        setSyncStatus('online', 'Cloud Synced');
+      }catch(err){
+        console.error('Firebase save error', err);
+        setSyncStatus('error', 'Sync Failed');
+      }
+    }
+
+    /* ── Firebase: save dashboard ── */
+    async function saveDashboardToCloud(){
+      if(!window._fbReady) return;
+      setSyncStatus('saving','Saving...');
+      try{
+        await window._fb.saveDashboard(state.dashboard);
+        setSyncStatus('online','Cloud Synced');
+      }catch(err){
+        setSyncStatus('error','Sync Failed');
+      }
+    }
+
+    function mergeDeep(target, source){
+      const output = Array.isArray(target) ? [...target] : { ...target };
+      if(source && typeof source === 'object'){
+        Object.keys(source).forEach(key => {
+          if(source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) output[key] = mergeDeep(output[key] || {}, source[key]);
+          else output[key] = source[key];
+        });
+      }
+      return output;
+    }
+
+    function migrateRequests(requests){
+      requests.forEach(req => {
+        req.id = req.id || generateRequestId();
+        req.date = req.date || formatDate();
+        req.reqName = req.reqName || req.name || 'Field Engineer';
+        req.reqArea = req.reqArea || req.area || '';
+        req.reqNeed = req.reqNeed || req.justification || '';
+        req.reqCalc = req.reqCalc || '';
+        req.reqRisk = req.reqRisk || '';
+        req.reqAlt = req.reqAlt || req.alternatives || '';
+        req.attachments = Array.isArray(req.attachments) ? req.attachments : [];
+        req.items = Array.isArray(req.items) ? req.items : [];
+        req.items.forEach(item => {
+          item.id = item.id || generateLineId();
+          item.status = item.status || 'Pending Review';
+          item.uom = item.uom || 'NO';
+          item.planner = item.planner || {};
+          item.planner.reviewQty = item.planner.reviewQty ?? item.qty ?? 0;
+          item.planner.installedReview = item.planner.installedReview ?? item.installed ?? 0;
+          item.planner.siteStockReview = item.planner.siteStockReview ?? item.siteStock ?? 0;
+          item.planner.uomReview = item.planner.uomReview ?? item.uom ?? 'NO';
+          item.planner.cons2023 = item.planner.cons2023 ?? 0;
+          item.planner.installedLocation = item.planner.installedLocation ?? item.location ?? '';
+        });
+      });
+    }
+
+    function formatDate(dateObj = new Date()){
+      return dateObj.toLocaleDateString('en-GB').replace(/\//g, '-');
+    }
+
+    function generateRequestId(){
+      let id='';
+      do{ id = 'REQ-' + Math.floor(Math.random()*900 + 100); }
+      while(state.requests.some(r => r.id === id));
+      return id;
+    }
+
+    function generateLineId(){ return 'LI-' + Math.random().toString(36).slice(2, 9).toUpperCase(); }
+
+    function escapeHtml(value){
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function csvEscape(value){ return '"' + String(value ?? '').replace(/"/g, '""') + '"'; }
+    function number(n, digits = 2){ return Number(n || 0).toFixed(digits); }
+    function integer(n){ return Number(n || 0).toLocaleString('en-IN'); }
+
+    function openRoleModal(force = false){
+      if(force || !currentRole){
+        document.getElementById('roleModal').style.display = 'flex';
+        if(force) document.getElementById('plannerPasswordPanel').classList.add('hidden');
+      }
+    }
+
+    function chooseRole(role){
+      currentRole = role;
+      localStorage.setItem(ROLE_KEY, role);
+      document.getElementById('roleModal').style.display = 'none';
+      applyRoleAccess();
+      activateSavedTab();
+    }
+
+    function showPlannerPasswordPanel(){
+      document.getElementById('plannerPasswordPanel').classList.remove('hidden');
+      document.getElementById('plannerPassword').focus();
+    }
+
+    function hidePlannerPasswordPanel(){
+      document.getElementById('plannerPasswordPanel').classList.add('hidden');
+      document.getElementById('plannerPassword').value = '';
+    }
+
+    function validatePlannerRole(){
+      const value = document.getElementById('plannerPassword').value;
+      if(value !== PLANNER_PASSWORD){
+        alert('Incorrect planner password.');
+        document.getElementById('plannerPassword').focus();
+        return;
+      }
+      document.getElementById('plannerPassword').value = '';
+      chooseRole('planner');
+    }
+
+    function applyRoleAccess(){
+      const isPlanner = currentRole === 'planner';
+      document.getElementById('roleLabel').textContent = `Role: ${isPlanner ? 'Planner' : 'User'}`;
+      document.querySelectorAll('[data-role="planner"]').forEach(el => el.classList.toggle('hidden', !isPlanner));
+      const activeTab = localStorage.getItem(TAB_KEY) || 'dash';
+      if(!isPlanner && ['track','planner','admin'].includes(activeTab)){
+        const dashBtn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes("'dash'"));
+        switchTab('dash', dashBtn);
+      }
+    }
+
+    function switchTab(id, btn){
+      if(currentRole !== 'planner' && ['track','planner','admin'].includes(id)){
+        alert('Planner access is required for this tab.');
+        openRoleModal(true);
+        return;
+      }
+      document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.add('hidden'));
+      const target = document.getElementById(id);
+      if(target) target.classList.remove('hidden');
+      document.querySelectorAll('[data-tab-btn]').forEach(b => b.classList.remove('active'));
+      if(btn) btn.classList.add('active');
+      localStorage.setItem(TAB_KEY, id);
+      if(id === 'track') renderTracker();
+      if(id === 'dash') refreshDashboard();
+      if(id === 'admin') loadAdminForm();
+      if(id === 'planner') renderPlannerPanel();
+    }
+
+    function activateSavedTab(){
+      const id = localStorage.getItem(TAB_KEY) || 'dash';
+      const safeId = (currentRole !== 'planner' && ['track','planner','admin'].includes(id)) ? 'dash' : id;
+      const btn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes(`'${safeId}'`)) || document.querySelector('[data-tab-btn]');
+      switchTab(safeId, btn);
+    }
+
+    function ensureChartsLoaded(){
+      if(chartLibLoaded || window.Chart) return Promise.resolve();
+      return new Promise(resolve => {
+        const existing = document.querySelector('script[data-chartjs-loader="1"]');
+        if(existing){ existing.addEventListener('load', () => { chartLibLoaded = true; resolve(); }, { once:true }); return; }
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+        script.async = true;
+        script.dataset.chartjsLoader = '1';
+        script.onload = () => { chartLibLoaded = true; resolve(); };
+        script.onerror = () => { console.warn('Chart.js failed to load'); resolve(); };
+        document.head.appendChild(script);
+      });
+    }
+
+    function getRequestCounts(req){
+      const counts = { pending:0, approved:0, returned:0, rejected:0 };
+      (req.items || []).forEach(item => {
+        if(item.status === 'Approved') counts.approved++;
+        else if(item.status === 'Returned') counts.returned++;
+        else if(item.status === 'Rejected') counts.rejected++;
+        else counts.pending++;
+      });
+      return counts;
+    }
+
+    function getRequestStatus(req){
+      const c = getRequestCounts(req);
+      if(c.pending === 0 && c.returned === 0 && c.rejected === 0) return 'Approved';
+      if(c.pending === 0 && c.approved === 0 && c.returned === 0 && c.rejected > 0) return 'Rejected';
+      if(c.pending === 0 && c.approved === 0 && c.returned > 0 && c.rejected === 0) return 'Returned';
+      if(c.pending > 0 && c.approved === 0 && c.returned === 0 && c.rejected === 0) return 'Pending Review';
+      return 'Mixed';
+    }
+
+    function statusPill(status){
+      const cls = status === 'Approved' ? 'approved' : status === 'Returned' ? 'returned' : status === 'Rejected' ? 'rejected' : status === 'Mixed' ? 'mixed' : 'pending';
+      return `<span class="status ${cls}">${escapeHtml(status)}</span>`;
+    }
+
+    function typeBadge(type){
+      const normalized = (type || '').toLowerCase();
+      const icon = normalized === 'emergency' ? 'fa-bolt' : normalized === 'breakdown' ? 'fa-triangle-exclamation' : 'fa-screwdriver-wrench';
+      const cls = (normalized === 'emergency' || normalized === 'breakdown') ? normalized : '';
+      return `<span class="type-badge ${cls}"><i class="fa-solid ${icon}"></i>${escapeHtml(type || 'NA')}</span>`;
+    }
+
+    function clearValidationMarks(){
+      document.querySelectorAll('.input-error').forEach(el => el.classList.remove('input-error'));
+      document.querySelectorAll('.field-help.show').forEach(el => el.classList.remove('show'));
+    }
+
+    function markInvalid(el, helpId){
+      if(el) el.classList.add('input-error');
+      if(helpId){ const help = document.getElementById(helpId); if(help) help.classList.add('show'); }
+    }
+
+    function addLineItem(prefill = {}){
+      const tbody = document.getElementById('itemRows');
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="col-sr row-sr"></td>
+        <td><input type="text" class="mat-code" inputmode="numeric" maxlength="9" placeholder="Ex: 300086992" value="${escapeHtml(prefill.matCode || '')}" required></td>
+        <td><input type="text" class="mat-desc" placeholder="Material details..." value="${escapeHtml(prefill.desc || '')}" required></td>
+        <td>
+          <select class="mat-type" required>
+            <option value="">Select Type...</option>
+            <option value="Preventive" ${prefill.type === 'Preventive' ? 'selected' : ''}>Preventive</option>
+            <option value="Breakdown" ${prefill.type === 'Breakdown' ? 'selected' : ''}>Breakdown</option>
+            <option value="Emergency" ${prefill.type === 'Emergency' ? 'selected' : ''}>Emergency</option>
+            <option value="Consumable" ${prefill.type === 'Consumable' ? 'selected' : ''}>Consumable</option>
+          </select>
+        </td>
+        <td>
+          <select class="mat-uom">
+            <option value="NO" ${(prefill.uom || 'NO') === 'NO' ? 'selected' : ''}>NO</option>
+            <option value="SET" ${prefill.uom === 'SET' ? 'selected' : ''}>SET</option>
+            <option value="ROL" ${prefill.uom === 'ROL' ? 'selected' : ''}>ROL</option>
+            <option value="KG" ${prefill.uom === 'KG' ? 'selected' : ''}>KG</option>
+          </select>
+        </td>
+        <td><input type="number" class="mat-qty" min="1" step="1" value="${Number(prefill.qty || 1)}" required></td>
+        <td><input type="number" class="mat-installed" min="0" step="1" value="${Number(prefill.installed || 0)}"></td>
+        <td><input type="number" class="mat-site" min="0" step="1" value="${Number(prefill.siteStock || 0)}"></td>
+        <td><input type="text" class="mat-location" placeholder="Location" value="${escapeHtml(prefill.location || '')}"></td>
+        <td style="text-align:center"><button type="button" class="btn delete-line" onclick="removeLineItem(this)"><i class="fa-solid fa-trash-can"></i> Delete</button></td>
+      `;
+      tbody.appendChild(tr);
+      tr.querySelector('.mat-code').addEventListener('input', function(){ this.value = this.value.replace(/\D/g, '').slice(0, 9); this.classList.remove('input-error'); });
+      ['.mat-desc','.mat-type','.mat-qty'].forEach(selector => {
+        const el = tr.querySelector(selector);
+        const evt = el.tagName === 'SELECT' ? 'change' : 'input';
+        el.addEventListener(evt, function(){ this.classList.remove('input-error'); });
+      });
+      reindexLineItems();
+    }
+
+    function removeLineItem(button){
+      const rows = document.querySelectorAll('#itemRows tr');
+      if(rows.length <= 1){ alert('At least one line item is required.'); return; }
+      button.closest('tr').remove();
+      reindexLineItems();
+    }
+
+    function reindexLineItems(){
+      document.querySelectorAll('#itemRows .row-sr').forEach((cell, idx) => cell.textContent = idx + 1);
+    }
+
+    function readLineItems(){
+      const rows = [...document.querySelectorAll('#itemRows tr')];
+      const items = [];
+      let valid = true;
+      rows.forEach(row => {
+        const codeEl = row.querySelector('.mat-code');
+        const descEl = row.querySelector('.mat-desc');
+        const typeEl = row.querySelector('.mat-type');
+        const qtyEl = row.querySelector('.mat-qty');
+        const installedEl = row.querySelector('.mat-installed');
+        const siteEl = row.querySelector('.mat-site');
+        const uomEl = row.querySelector('.mat-uom');
+        const item = {
+          id: generateLineId(),
+          matCode: codeEl.value.trim(),
+          desc: descEl.value.trim(),
+          type: typeEl.value,
+          uom: uomEl.value,
+          qty: Number(qtyEl.value || 0),
+          installed: Number(installedEl.value || 0),
+          siteStock: Number(siteEl.value || 0),
+          location: row.querySelector('.mat-location').value.trim(),
+          status: 'Pending Review',
+          planner: {
+            reviewQty: Number(qtyEl.value || 0),
+            installedReview: Number(installedEl.value || 0),
+            siteStockReview: Number(siteEl.value || 0),
+            uomReview: uomEl.value,
+            installedLocation: row.querySelector('.mat-location').value.trim(),
+            cons2023: 0
+          }
+        };
+        if(!/^\d{9}$/.test(item.matCode)){ codeEl.classList.add('input-error'); valid = false; }
+        if(!item.desc){ descEl.classList.add('input-error'); valid = false; }
+        if(!item.type){ typeEl.classList.add('input-error'); valid = false; }
+        if(item.qty < 1){ qtyEl.classList.add('input-error'); valid = false; }
+        items.push(item);
+      });
+      if(!valid){ alert('Please correct highlighted line item fields. Material code must be 9 digits and quantity must be more than 0.'); return null; }
+      return items;
+    }
+
+    async function readAttachments(){
+      const files = [...document.getElementById('reqFiles').files];
+      const attachments = [];
+      for(const file of files){
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        attachments.push({ name:file.name, type:file.type, size:file.size, dataUrl });
+      }
+      return attachments;
+    }
+
+    async function buildRequestFromForm(){
+      clearValidationMarks();
+      const reqNameEl = document.getElementById('reqName');
+      const reqAreaEl = document.getElementById('reqArea');
+      const reqNeedEl = document.getElementById('reqNeed');
+      const reqCalcEl = document.getElementById('reqCalc');
+      const reqRiskEl = document.getElementById('reqRisk');
+      const reqAltEl = document.getElementById('reqAlt');
+      const reqName = reqNameEl.value.trim();
+      const reqArea = reqAreaEl.value;
+      const reqNeed = reqNeedEl.value.trim();
+      const reqCalc = reqCalcEl.value.trim();
+      const reqRisk = reqRiskEl.value.trim();
+      const reqAlt = reqAltEl.value.trim();
+      const items = readLineItems();
+      if(!items) return null;
+      let valid = true;
+      if(!reqName){ markInvalid(reqNameEl,'helpReqName'); valid = false; }
+      if(!reqArea){ markInvalid(reqAreaEl,'helpReqArea'); valid = false; }
+      if(!reqNeed){ markInvalid(reqNeedEl,'helpReqNeed'); valid = false; }
+      if(!reqCalc){ markInvalid(reqCalcEl,'helpReqCalc'); valid = false; }
+      if(!reqRisk){ markInvalid(reqRiskEl,'helpReqRisk'); valid = false; }
+      if(!reqAlt){ markInvalid(reqAltEl,'helpReqAlt'); valid = false; }
+      if(!valid){ alert('Please complete all mandatory fields in General Information and Business Case sections.'); return null; }
+      const attachments = await readAttachments();
+      return { id: generateRequestId(), date: formatDate(), reqName, reqArea, reqNeed, reqCalc, reqRisk, reqAlt, attachments, items };
+    }
+
+    function resetRequestForm(){
+      document.getElementById('requestForm').reset();
+      document.getElementById('reqName').value = 'Field Engineer';
+      document.getElementById('fileList').innerHTML = '';
+      document.getElementById('itemRows').innerHTML = '';
+      clearValidationMarks();
+      addLineItem();
+    }
+
+    async function submitRequest(event){
+      event.preventDefault();
+      const submitBtn = event.target.querySelector('button[type="submit"]');
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+      try{
+        const payload = await buildRequestFromForm();
+        if(!payload) return;
+        state.requests.unshift(payload);
+        await saveState(payload.id);
+        resetRequestForm();
+        refreshDashboard();
+        renderTracker();
+        document.getElementById('successModal').style.display = 'flex';
+      }catch(err){
+        console.error(err);
+        alert('Attachment read failed. Please try with smaller files or check browser permissions.');
+      }finally{
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="fa-solid fa-arrow-right"></i> Submit to Planning Review';
+      }
+    }
+
+    function closeSuccessModal(){
+      document.getElementById('successModal').style.display = 'none';
+      const btn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes("'track'"));
+      if(currentRole === 'planner') switchTab('track', btn);
+      else {
+        const dashBtn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes("'dash'"));
+        switchTab('dash', dashBtn);
+      }
+    }
+
+    function renderSelectedFiles(){
+      const list = document.getElementById('fileList');
+      const files = [...document.getElementById('reqFiles').files];
+      list.innerHTML = files.length ? files.map(f => `<li>${escapeHtml(f.name)} <span class="muted">(${integer(f.size)} bytes)</span></li>`).join('') : '';
+    }
+
+    function getAttachmentHtml(attachments){
+      if(!attachments || !attachments.length) return '<span class="muted">No attachment</span>';
+      return attachments.map(file => `<a href="${file.dataUrl}" download="${escapeHtml(file.name)}" class="attachment-link"><i class="fa-solid fa-paperclip"></i> ${escapeHtml(file.name)}</a>`).join('');
+    }
+
+    function getFilteredRequests(){
+      const text = document.getElementById('searchInput').value.trim().toLowerCase();
+      const status = document.getElementById('filterStatus').value;
+      const type = document.getElementById('filterType').value;
+      return state.requests.filter(req => {
+        const requestStatus = getRequestStatus(req);
+        const itemBlob = req.items.map(item => [item.matCode, item.desc, item.type, item.location, item.status].join(' ')).join(' ');
+        const headerBlob = [req.id, req.reqName, req.reqArea, requestStatus, req.reqNeed].join(' ');
+        const blob = (headerBlob + ' ' + itemBlob).toLowerCase();
+        const textMatch = !text || blob.includes(text);
+        const statusMatch = status === 'All' || requestStatus === status || req.items.some(item => item.status === status);
+        const typeMatch = type === 'All' || req.items.some(item => item.type === type);
+        return textMatch && statusMatch && typeMatch;
+      });
+    }
+
+    function renderTracker(){
+      const wrap = document.getElementById('trackerWrap');
+      const rows = getFilteredRequests();
+      wrap.innerHTML = '';
+      if(!rows.length){
+        wrap.innerHTML = '<div class="card"><div class="empty"><i class="fa-regular fa-folder-open"></i> No records found. Submit a new request or adjust the filters.</div></div>';
+        return;
+      }
+
+      rows.forEach(req => {
+        const counts = getRequestCounts(req);
+        const requestStatus = getRequestStatus(req);
+        const emergencyCount = req.items.filter(item => item.type === 'Emergency').length;
+        const breakdownCount = req.items.filter(item => item.type === 'Breakdown').length;
+        const attachmentsCount = (req.attachments || []).length;
+        const lineRows = req.items.map((item, idx) => `
+          <tr class="${item.type === 'Emergency' || item.type === 'Breakdown' ? 'row-emergency' : ''}">
+            <td>${idx + 1}</td>
+            <td><button class="material-link" type="button" onclick="openPlanner('${req.id}','${item.id}')">${escapeHtml(item.matCode)}</button></td>
+            <td>${escapeHtml(item.desc)}</td>
+            <td>${typeBadge(item.type)}</td>
+            <td>${escapeHtml(item.planner?.uomReview || item.uom)}</td>
+            <td>${Number(item.qty || 0)}</td>
+            <td>${Number(item.planner?.installedReview ?? item.installed ?? 0)}</td>
+            <td>${Number(item.planner?.siteStockReview ?? item.siteStock ?? 0)}</td>
+            <td>${escapeHtml(item.planner?.installedLocation || item.location || '-')}</td>
+            <td>${statusPill(item.status || 'Pending Review')}</td>
+            <td><button class="btn white sm" type="button" onclick="openPlanner('${req.id}','${item.id}')"><i class="fa-solid fa-pen-to-square"></i> Review</button></td>
+          </tr>
+        `).join('');
+
+        wrap.insertAdjacentHTML('beforeend', `
+          <div class="request-card">
+            <div class="request-head">
+              <div>
+                <div class="request-title">
+                  <span>${escapeHtml(req.id)}</span>
+                  ${statusPill(requestStatus)}
+                  <span class="muted">${escapeHtml(req.date)}</span>
+                  <span class="muted">Requester: ${escapeHtml(req.reqName)}</span>
+                  <span class="muted">Area: ${escapeHtml(req.reqArea)}</span>
+                </div>
+                <div class="request-meta" style="margin-top:10px;">
+                  ${emergencyCount ? `<span class="chip warn"><i class="fa-solid fa-bolt"></i> ${emergencyCount} Emergency</span>` : ''}
+                  ${breakdownCount ? `<span class="chip warn"><i class="fa-solid fa-triangle-exclamation"></i> ${breakdownCount} Breakdown</span>` : ''}
+                  <span class="chip"><i class="fa-solid fa-layer-group"></i> ${req.items.length} Line Item(s)</span>
+                  ${attachmentsCount ? `<span class="chip"><i class="fa-solid fa-paperclip"></i> ${attachmentsCount} Attachment(s)</span>` : ''}
+                  <span class="chip"><i class="fa-solid fa-hourglass-half"></i> Pending: ${counts.pending}</span>
+                  <span class="chip"><i class="fa-solid fa-check"></i> Approved: ${counts.approved}</span>
+                  <span class="chip warn"><i class="fa-solid fa-rotate-left"></i> Returned / Rejected: ${counts.returned + counts.rejected}</span>
+                </div>
+              </div>
+              <div class="request-actions">
+                <button class="btn primary sm" type="button" onclick="exportApprovalSheet('${req.id}')"><i class="fa-solid fa-file-export"></i> Export Sheet</button>
+                <button class="btn green sm" type="button" onclick="bulkUpdateRequest('${req.id}','Approved')"><i class="fa-solid fa-check-double"></i> Approve All Pending</button>
+                <button class="btn orange sm" type="button" onclick="bulkUpdateRequest('${req.id}','Returned')"><i class="fa-solid fa-rotate-left"></i> Return All Pending</button>
+                <button class="btn red sm" type="button" onclick="bulkUpdateRequest('${req.id}','Rejected')"><i class="fa-solid fa-ban"></i> Reject All Pending</button>
+              </div>
+            </div>
+            <div class="biz-box"><strong>Business Case:</strong> ${escapeHtml(req.reqNeed)} | <strong>Qty Logic:</strong> ${escapeHtml(req.reqCalc)} | <strong>Risk:</strong> ${escapeHtml(req.reqRisk)} | <strong>Alternative:</strong> ${escapeHtml(req.reqAlt)}</div>
+            <div class="attachment-list" style="margin-bottom:12px;">${getAttachmentHtml(req.attachments)}</div>
+            <div class="table-shell">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Mat. Code</th>
+                    <th>Description</th>
+                    <th>Type</th>
+                    <th>UOM</th>
+                    <th>PR Qty</th>
+                    <th>Installed</th>
+                    <th>Site Stock</th>
+                    <th>Location</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>${lineRows}</tbody>
+              </table>
+            </div>
+          </div>
+        `);
+      });
+    }
+
+    async function bulkUpdateRequest(requestId, action){
+      const req = state.requests.find(r => r.id === requestId);
+      if(!req) return;
+      const pendingItems = req.items.filter(item => item.status === 'Pending Review');
+      if(!pendingItems.length){ alert('No pending line items available for bulk action.'); return; }
+      let remark = '';
+      if(action === 'Returned' || action === 'Rejected'){
+        remark = prompt(`Enter common remark for all pending line items to mark as ${action}:`);
+        if(remark === null) return;
+        if(!remark.trim()){ alert('Remark is required for return or reject.'); return; }
+      }
+      pendingItems.forEach(item => {
+        item.status = action;
+        item.planner = item.planner || {};
+        item.planner.remarks = remark || item.planner.remarks || '';
+      });
+      await saveState(requestId);
+      refreshDashboard();
+      renderTracker();
+      renderPlannerPanel();
+    }
+
+    function openPlanner(requestId, itemId){
+      plannerContext = { requestId, itemId };
+      renderPlannerPanel();
+      const btn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes("'planner'"));
+      switchTab('planner', btn);
+    }
+
+    function getPlannerTarget(){
+      const req = state.requests.find(r => r.id === plannerContext.requestId);
+      if(!req) return null;
+      const item = req.items.find(i => i.id === plannerContext.itemId);
+      if(!item) return null;
+      item.planner = item.planner || {};
+      item.planner.reviewQty = item.planner.reviewQty ?? item.qty ?? 0;
+      item.planner.installedReview = item.planner.installedReview ?? item.installed ?? 0;
+      item.planner.siteStockReview = item.planner.siteStockReview ?? item.siteStock ?? 0;
+      item.planner.uomReview = item.planner.uomReview ?? item.uom ?? 'NO';
+      item.planner.cons2023 = item.planner.cons2023 ?? 0;
+      item.planner.installedLocation = item.planner.installedLocation ?? item.location ?? '';
+      return { req, item };
+    }
+
+    function renderPlannerPanel(){
+      const empty = document.getElementById('plannerEmptyCard');
+      const panel = document.getElementById('plannerPanel');
+      const target = getPlannerTarget();
+      if(!target){ empty.classList.remove('hidden'); panel.classList.add('hidden'); return; }
+      empty.classList.add('hidden'); panel.classList.remove('hidden');
+      const { req, item } = target;
+      document.getElementById('plannerReqId').textContent = req.id;
+      document.getElementById('ctxMatCode').value = item.matCode;
+      document.getElementById('ctxDesc').value = item.desc;
+      document.getElementById('ctxArea').value = req.reqArea;
+      document.getElementById('ctxStatus').value = item.status;
+      document.getElementById('ctxNeed').textContent = req.reqNeed || '-';
+      document.getElementById('ctxCalc').textContent = req.reqCalc || '-';
+      document.getElementById('ctxRisk').textContent = req.reqRisk || '-';
+      document.getElementById('ctxAlt').textContent = req.reqAlt || '-';
+      document.getElementById('plannerAttachments').innerHTML = getAttachmentHtml(req.attachments);
+      document.getElementById('plUserQty').value = item.qty || 0;
+      document.getElementById('plReviewQty').value = item.planner.reviewQty ?? item.qty ?? 0;
+      document.getElementById('plInstalled').value = item.planner.installedReview ?? item.installed ?? 0;
+      document.getElementById('plSiteStock').value = item.planner.siteStockReview ?? item.siteStock ?? 0;
+      document.getElementById('plUom').value = item.planner.uomReview ?? item.uom ?? 'NO';
+      document.getElementById('plUnitValue').value = item.planner.unitValue ?? '';
+      document.getElementById('plCentralStock').value = item.planner.centralStock ?? '';
+      document.getElementById('plOpenPr').value = item.planner.openPr ?? '';
+      document.getElementById('plOpenPo').value = item.planner.openPo ?? '';
+      document.getElementById('plCons2025').value = item.planner.cons2025 ?? '';
+      document.getElementById('plCons2024').value = item.planner.cons2024 ?? '';
+      document.getElementById('plCons2023').value = item.planner.cons2023 ?? '';
+      document.getElementById('plInstalledLocation').value = item.planner.installedLocation ?? item.location ?? '';
+      document.getElementById('plRemarks').value = item.planner.remarks || '';
+      refreshPlannerMath();
+      renderPlannerStatusBox(item);
+    }
+
+    function renderPlannerStatusBox(item){
+      const box = document.getElementById('plannerStatusBox');
+      const remarks = item.planner?.remarks ? `<div class="help-text" style="margin-top:8px;"><strong>Latest Remark:</strong> ${escapeHtml(item.planner.remarks)}</div>` : '';
+      if(item.status === 'Approved') box.innerHTML = `<div class="success-box"><strong>Current Status:</strong> Approved${remarks}</div>`;
+      else if(item.status === 'Returned') box.innerHTML = `<div class="danger-box"><strong>Current Status:</strong> Returned${remarks}</div>`;
+      else if(item.status === 'Rejected') box.innerHTML = `<div class="danger-box"><strong>Current Status:</strong> Rejected${remarks}</div>`;
+      else box.innerHTML = `<div class="info-box"><strong>Current Status:</strong> Pending Review</div>`;
+    }
+
+    function refreshPlannerMath(){
+      const reviewQty = Number(document.getElementById('plReviewQty').value || 0);
+      const site = Number(document.getElementById('plSiteStock').value || 0);
+      const unitValue = Number(document.getElementById('plUnitValue').value || 0);
+      const central = Number(document.getElementById('plCentralStock').value || 0);
+      document.getElementById('plTotalValue').value = number(reviewQty * unitValue, 2);
+      document.getElementById('plTotalStock').value = site + central;
+      const target = getPlannerTarget();
+      if(target){
+        target.item.planner = target.item.planner || {};
+        target.item.planner.reviewQty = reviewQty;
+        target.item.planner.installedReview = Number(document.getElementById('plInstalled').value || 0);
+        target.item.planner.siteStockReview = site;
+        target.item.planner.uomReview = document.getElementById('plUom').value;
+        target.item.planner.unitValue = unitValue;
+        target.item.planner.totalValue = reviewQty * unitValue;
+        target.item.planner.centralStock = central;
+        target.item.planner.totalStock = site + central;
+        target.item.planner.openPr = Number(document.getElementById('plOpenPr').value || 0);
+        target.item.planner.openPo = Number(document.getElementById('plOpenPo').value || 0);
+        target.item.planner.cons2025 = Number(document.getElementById('plCons2025').value || 0);
+        target.item.planner.cons2024 = Number(document.getElementById('plCons2024').value || 0);
+        target.item.planner.cons2023 = Number(document.getElementById('plCons2023').value || 0);
+        target.item.planner.installedLocation = document.getElementById('plInstalledLocation').value.trim();
+      }
+    }
+
+    async function savePlannerDraft(){
+      const target = getPlannerTarget();
+      if(!target) return;
+      target.item.planner = target.item.planner || {};
+      target.item.planner.reviewQty = Number(document.getElementById('plReviewQty').value || 0);
+      target.item.planner.installedReview = Number(document.getElementById('plInstalled').value || 0);
+      target.item.planner.siteStockReview = Number(document.getElementById('plSiteStock').value || 0);
+      target.item.planner.uomReview = document.getElementById('plUom').value;
+      target.item.planner.unitValue = Number(document.getElementById('plUnitValue').value || 0);
+      target.item.planner.totalValue = Number(document.getElementById('plTotalValue').value || 0);
+      target.item.planner.centralStock = Number(document.getElementById('plCentralStock').value || 0);
+      target.item.planner.totalStock = Number(document.getElementById('plTotalStock').value || 0);
+      target.item.planner.openPr = Number(document.getElementById('plOpenPr').value || 0);
+      target.item.planner.openPo = Number(document.getElementById('plOpenPo').value || 0);
+      target.item.planner.cons2025 = Number(document.getElementById('plCons2025').value || 0);
+      target.item.planner.cons2024 = Number(document.getElementById('plCons2024').value || 0);
+      target.item.planner.cons2023 = Number(document.getElementById('plCons2023').value || 0);
+      target.item.planner.installedLocation = document.getElementById('plInstalledLocation').value.trim();
+      target.item.planner.remarks = document.getElementById('plRemarks').value.trim();
+      saveState(target.req.id);
+    }
+
+    function openActionModal(action){
+      const target = getPlannerTarget();
+      if(!target) return;
+      const remarks = document.getElementById('plRemarks').value.trim();
+      if((action === 'Returned' || action === 'Rejected') && !remarks){
+        alert('Remark is required for return or reject.');
+        document.getElementById('plRemarks').focus();
+        return;
+      }
+      savePlannerDraft();
+      pendingPlannerAction = action;
+      const titleMap = { Approved:'Approve Line Item', Returned:'Return Line Item', Rejected:'Reject Line Item' };
+      const textMap = {
+        Approved:'Please confirm planner approval for the selected line item.',
+        Returned:'Please confirm return of the selected line item with planner remark.',
+        Rejected:'Please confirm hard rejection of the selected line item with planner remark.'
+      };
+      document.getElementById('actionModalTitle').textContent = titleMap[action];
+      document.getElementById('actionModalText').textContent = textMap[action];
+      document.getElementById('actionModalSummary').innerHTML = `
+        <strong>Material Code:</strong> ${escapeHtml(target.item.matCode)}<br>
+        <strong>Description:</strong> ${escapeHtml(target.item.desc)}<br>
+        <strong>User Qty:</strong> ${Number(target.item.qty || 0)} | <strong>Reviewed Qty:</strong> ${Number(target.item.planner.reviewQty || 0)}<br>
+        <strong>Installed Qty:</strong> ${Number(target.item.planner.installedReview || 0)} | <strong>Site Store Stock:</strong> ${Number(target.item.planner.siteStockReview || 0)}<br>
+        <strong>UOM:</strong> ${escapeHtml(target.item.planner.uomReview || target.item.uom || 'NO')}<br>
+        <strong>Unit Value (INR):</strong> ${number(target.item.planner.unitValue || 0)} | <strong>Total Value (INR):</strong> ${number(target.item.planner.totalValue || 0)}<br>
+        <strong>Remarks:</strong> ${escapeHtml(target.item.planner.remarks || 'No remark')}
+      `;
+      const btn = document.getElementById('actionModalConfirmBtn');
+      btn.className = 'btn ' + (action === 'Approved' ? 'green' : action === 'Returned' ? 'orange' : 'red');
+      btn.innerHTML = `<i class="fa-solid ${action === 'Approved' ? 'fa-check-double' : action === 'Returned' ? 'fa-rotate-left' : 'fa-ban'}"></i> Confirm ${action}`;
+      document.getElementById('actionModal').style.display = 'flex';
+    }
+
+    function closeActionModal(){
+      document.getElementById('actionModal').style.display = 'none';
+      pendingPlannerAction = null;
+    }
+
+    async function confirmPlannerAction(){
+      const target = getPlannerTarget();
+      if(!target || !pendingPlannerAction) return;
+      target.item.status = pendingPlannerAction;
+      target.item.planner.remarks = document.getElementById('plRemarks').value.trim();
+      await saveState(target.req.id);
+      closeActionModal();
+      refreshDashboard();
+      renderTracker();
+      renderPlannerPanel();
+      alert(`Line item ${target.item.matCode} updated to ${pendingPlannerAction}.`);
+    }
+
+    function buildApprovalRows(requests){
+      const rows = [];
+      requests.forEach(req => {
+        (req.items || []).forEach((item, idx) => {
+          const pl = item.planner || {};
+          rows.push({
+            reqId:req.id,
+            srNo: idx + 1,
+            matCode:item.matCode || '',
+            matDesc:item.desc || '',
+            uom: pl.uomReview || item.uom || '',
+            prQty:item.qty || 0,
+            installedQty: pl.installedReview ?? item.installed ?? 0,
+            siteStore: pl.siteStockReview ?? item.siteStock ?? 0,
+            totalStock: pl.totalStock ?? ((pl.siteStockReview ?? item.siteStock ?? 0) + (pl.centralStock ?? 0)),
+            whyRequired:req.reqNeed || '',
+            failurePattern:req.reqAlt || '-',
+            risk:req.reqRisk || '',
+            alternative:req.reqAlt || '-',
+            qtyLogic:req.reqCalc || '',
+            installedLocation: pl.installedLocation || item.location || '',
+            cons2025: pl.cons2025 || 0,
+            cons2024: pl.cons2024 || 0,
+            cons2023: pl.cons2023 || 0,
+            unitValue: pl.unitValue || 0,
+            totalValue: pl.totalValue || 0,
+            openPr: pl.openPr || 0,
+            openPo: pl.openPo || 0,
+            centralStock: pl.centralStock || 0,
+            status:item.status || 'Pending Review',
+            remark:pl.remarks || ''
+          });
+        });
+      });
+      return rows;
+    }
+
+    function exportApprovalSheet(requestId = null){
+      const requests = requestId ? state.requests.filter(r => r.id === requestId) : getFilteredRequests();
+      if(!requests.length){ alert('No data available to export.'); return; }
+      const rows = buildApprovalRows(requests);
+      const totalValue = rows.reduce((sum, row) => sum + Number(row.totalValue || 0), 0);
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>COREX Approval Readiness Sheet</title>
+<style>
+  body{font-family:Arial,sans-serif;margin:18px;color:#111}
+  h1,h2,p{margin:0 0 10px 0}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}
+  .meta{font-size:12px;color:#444}
+  table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px}
+  th,td{border:1px solid #333;padding:6px;vertical-align:top;word-wrap:break-word}
+  th{background:#ffef4d;text-align:center}
+  .group{background:#f3f4f6;font-weight:700;text-align:center}
+  .right{text-align:right}
+  .center{text-align:center}
+  .note{margin-top:14px;font-size:12px}
+  .muted{color:#555}
+  @media print{body{margin:10px} .no-print{display:none}}
+</style>
+</head>
+<body>
+  <div class="top">
+    <div>
+      <h1>MATERIAL PURCHASE REQUISITION – APPROVAL READINESS SHEET</h1>
+      <div class="meta">Generated from One COREX Planning Portal V2.6</div>
+      <div class="meta">Generated on: ${new Date().toLocaleString('en-IN')}</div>
+      <div class="meta">Included Requests: ${requests.map(r => r.id).join(', ')}</div>
+    </div>
+    <div class="meta right">
+      <div>Total Requests: ${requests.length}</div>
+      <div>Total Line Items: ${rows.length}</div>
+      <div>Total Value (INR): ${integer(Math.round(totalValue))}</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th colspan="14" class="group">USER INPUTS</th>
+        <th colspan="9" class="group">PLANNER INPUTS</th>
+      </tr>
+      <tr>
+        <th>Req ID</th>
+        <th>Sr.No</th>
+        <th>MAT. CODE</th>
+        <th>MAT DISC</th>
+        <th>UOM</th>
+        <th>PR Qty.</th>
+        <th>Installed QTY</th>
+        <th>Site Store stock.</th>
+        <th>Total Stock</th>
+        <th>Why Required This Item</th>
+        <th>What is the Failure pattern</th>
+        <th>What is the risk of non-availability?</th>
+        <th>Any other alternative?</th>
+        <th>How is the pr qty decided?</th>
+        <th>Installed Location</th>
+        <th>2025-CONS</th>
+        <th>2024-CONS.</th>
+        <th>2023-CONS.</th>
+        <th>UNIT VALUE</th>
+        <th>TOTAL VALUE</th>
+        <th>OPEN PR</th>
+        <th>OPEN PO</th>
+        <th>Central Store stock</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map(row => `
+        <tr>
+          <td class="center">${escapeHtml(row.reqId)}</td>
+          <td class="center">${row.srNo}</td>
+          <td>${escapeHtml(row.matCode)}</td>
+          <td>${escapeHtml(row.matDesc)}</td>
+          <td class="center">${escapeHtml(row.uom)}</td>
+          <td class="center">${row.prQty}</td>
+          <td class="center">${row.installedQty}</td>
+          <td class="center">${row.siteStore}</td>
+          <td class="center">${row.totalStock}</td>
+          <td>${escapeHtml(row.whyRequired)}</td>
+          <td>${escapeHtml(row.failurePattern)}</td>
+          <td>${escapeHtml(row.risk)}</td>
+          <td>${escapeHtml(row.alternative)}</td>
+          <td>${escapeHtml(row.qtyLogic)}</td>
+          <td>${escapeHtml(row.installedLocation)}</td>
+          <td class="center">${row.cons2025}</td>
+          <td class="center">${row.cons2024}</td>
+          <td class="center">${row.cons2023}</td>
+          <td class="right">${integer(Math.round(row.unitValue || 0))}</td>
+          <td class="right">${integer(Math.round(row.totalValue || 0))}</td>
+          <td class="center">${row.openPr}</td>
+          <td class="center">${row.openPo}</td>
+          <td class="center">${row.centralStock}</td>
+        </tr>
+        <tr>
+          <td colspan="23"><strong>Status:</strong> ${escapeHtml(row.status)} ${row.remark ? `| <strong>Planner Remark:</strong> ${escapeHtml(row.remark)}` : ''}</td>
+        </tr>
+      `).join('')}
+      <tr>
+        <td colspan="19" class="right"><strong>TOTAL</strong></td>
+        <td class="right"><strong>${integer(Math.round(totalValue))}</strong></td>
+        <td colspan="3"></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <strong>Note:</strong> This export is designed to reduce manual approval readiness work by combining user inputs and planner review inputs in one structured sheet. Use browser print or save as PDF if required.
+  </div>
+
+  <div class="note muted no-print">
+    Tip: Press <strong>Ctrl+P</strong> to print or save as PDF after this sheet opens.
+  </div>
+</body>
+</html>`;
+      const blob = new Blob([html], { type:'text/html;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = requestId ? `${requestId}_Approval_Readiness_Sheet.html` : 'COREX_Approval_Readiness_Sheet.html';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    async function clearAllData(){
+      if(!confirm('This will permanently clear all requests from the cloud database. Continue?')) return;
+      setSyncStatus('saving','Deleting...');
+      try{
+        const ids = state.requests.map(r => r.id);
+        await window._fb.clearRequests(ids);
+        state.requests = [];
+        plannerContext = { requestId:null, itemId:null };
+        renderTracker();
+        renderPlannerPanel();
+        refreshDashboard();
+        setSyncStatus('online','Cloud Synced');
+      }catch(err){
+        setSyncStatus('error','Delete Failed');
+        alert('Error deleting data: ' + err.message);
+      }
+    }
+
+    async function seedDemoData(){
+      const demo = [
+        {
+          id:'REQ-201', date:'26-04-2026', reqName:'Field Engineer', reqArea:'TOWER', reqNeed:'Breakdown repair urgently required for running equipment.', reqCalc:'Quantity based on one-to-one replacement and one standby unit.', reqRisk:'Line stoppage if spare is not available.', reqAlt:'No alternative spare available at site.',
+          attachments:[{ name:'failure_photo.jpg', type:'image/jpeg', size:0, dataUrl:'data:text/plain;base64,RGVtbyBBdHRhY2htZW50OiBmYWlsdXJlX3Bob3RvLmpwZw==' }, { name:'old_part_note.pdf', type:'application/pdf', size:0, dataUrl:'data:text/plain;base64,RGVtbyBBdHRhY2htZW50OiBvbGRfcGFydF9ub3RlLnBkZg==' }],
+          items:[
+            { id:'LI-A1', matCode:'300720416', desc:'Brake drum assembly for emergency replacement', type:'Emergency', uom:'NO', qty:12, installed:12, siteStock:5, location:'Tower-01', status:'Pending Review', planner:{ reviewQty:12, installedReview:12, siteStockReview:5, uomReview:'NO', unitValue:3000000, centralStock:0, totalValue:36000000, totalStock:5, openPr:0, openPo:0, cons2025:12, cons2024:8, cons2023:6, installedLocation:'Tower-01', remarks:'' } },
+            { id:'LI-A2', matCode:'300111223', desc:'Emergency brake liner kit', type:'Breakdown', uom:'SET', qty:2, installed:2, siteStock:0, location:'Tower-01', status:'Returned', planner:{ reviewQty:1, installedReview:2, siteStockReview:0, uomReview:'SET', unitValue:100000, centralStock:0, totalValue:100000, totalStock:0, openPr:0, openPo:0, cons2025:2, cons2024:1, cons2023:1, installedLocation:'Tower-01', remarks:'Installed quantity is not matching. Please verify actual installed count.' } }
+          ]
+        },
+        {
+          id:'REQ-202', date:'26-04-2026', reqName:'Planner', reqArea:'MH', reqNeed:'Scheduled shutdown maintenance requirement.', reqCalc:'Based on preventive maintenance plan for next shutdown.', reqRisk:'Maintenance delay and repeat stoppage risk.', reqAlt:'Reconditioning possible for one unit only.',
+          attachments:[{ name:'pm_plan.xlsx', type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size:0, dataUrl:'data:text/plain;base64,RGVtbyBBdHRhY2htZW50OiBwbV9wbGFuLnhsc3g=' }],
+          items:[
+            { id:'LI-B1', matCode:'300086992', desc:'Conveyor bearing set', type:'Preventive', uom:'SET', qty:4, installed:8, siteStock:2, location:'MH Zone A', status:'Approved', planner:{ reviewQty:4, installedReview:8, siteStockReview:2, uomReview:'SET', unitValue:50000, centralStock:6, totalValue:200000, totalStock:8, openPr:0, openPo:1, cons2025:4, cons2024:5, cons2023:4, installedLocation:'MH Zone A', remarks:'Approved based on shutdown plan.' } }
+          ]
+        },
+        {
+          id:'REQ-203', date:'26-04-2026', reqName:'Store User', reqArea:'STORE', reqNeed:'Hydraulic hose replacement after sudden failure.', reqCalc:'Based on machine requirement and stock zero at site.', reqRisk:'Machine line stoppage if hose is unavailable.', reqAlt:'Temporary repair only, not reliable.',
+          attachments:[{ name:'hose_failure.png', type:'image/png', size:0, dataUrl:'data:text/plain;base64,RGVtbyBBdHRhY2htZW50OiBob3NlX2ZhaWx1cmUucG5n' }],
+          items:[
+            { id:'LI-C1', matCode:'300111222', desc:'Hydraulic hose kit', type:'Breakdown', uom:'NO', qty:6, installed:6, siteStock:0, location:'Store Bay 2', status:'Rejected', planner:{ reviewQty:0, installedReview:6, siteStockReview:0, uomReview:'NO', unitValue:70000, centralStock:0, totalValue:0, totalStock:0, openPr:0, openPo:0, cons2025:6, cons2024:6, cons2023:5, installedLocation:'Store Bay 2', remarks:'Hard reject. Exact equipment reference and old part details are missing.' } }
+          ]
+        }
+      ];
+      const ids = new Set(state.requests.map(r => r.id));
+      const newOnes = demo.filter(req => !ids.has(req.id));
+      newOnes.forEach(req => state.requests.push(req));
+      if(newOnes.length){
+        setSyncStatus('saving','Saving demo...');
+        try{
+          await window._fb.saveRequests(newOnes);
+          setSyncStatus('online','Cloud Synced');
+        }catch(err){ setSyncStatus('error','Sync Failed'); }
+      }
+      renderTracker();
+      refreshDashboard();
+      const btn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes("'track'"));
+      if(currentRole === 'planner') switchTab('track', btn);
+    }
+
+    /* ─── DASHBOARD REFRESH ──────────────────────────────────────── */
+    async function refreshDashboard(){
+      const db = state.dashboard;
+
+      /* KPI cards */
+      document.getElementById('kBudgetTotal').textContent = Number(db.kpi.budgetTotal || 0).toFixed(2) + ' CR';
+      document.getElementById('kBudgetUsed').textContent  = Number(db.kpi.budgetUsed  || 0).toFixed(2) + ' CR';
+      document.getElementById('kBudgetBal').textContent   = Number(db.kpi.budgetBal   || 0).toFixed(2) + ' CR';
+      document.getElementById('kPoTotal').textContent     = integer(db.kpi.poTotal || 0);
+
+      /* Workflow summary from live request data */
+      let pending = 0, approved = 0, reject = 0;
+      state.requests.forEach(req => {
+        req.items.forEach(item => {
+          if(item.status === 'Approved') approved++;
+          else if(item.status === 'Returned' || item.status === 'Rejected') reject++;
+          else pending++;
+        });
+      });
+      document.getElementById('sumPending').textContent  = pending;
+      document.getElementById('sumApproved').textContent = approved;
+      document.getElementById('sumReject').textContent   = reject;
+
+      /* Budget table */
+      const areas  = ['hyd','mh','operation','ph','shift','store','tower','capex'];
+      const labels = ['HYD','MH','Operation','PH','Shift','Store','Tower','Capex'];
+      const alloc  = db.areas.allocation;
+      const cons   = db.areas.consumption;
+      const totalAlloc = areas.reduce((s,a) => s + Number(alloc[a] || 0), 0);
+      const totalCons  = areas.reduce((s,a) => s + Number(cons[a]  || 0), 0);
+      const bal        = areas.map(a => Number(alloc[a]||0) - Number(cons[a]||0));
+      const totalBal   = bal.reduce((s,v) => s + v, 0);
+
+      const tbody = document.getElementById('budgetTableBody');
+      tbody.innerHTML = `
+        <tr>
+          <td><strong>Allocation (CR)</strong></td>
+          ${areas.map(a => `<td class="center">${Number(alloc[a]||0).toFixed(2)}</td>`).join('')}
+          <td class="center"><strong>${totalAlloc.toFixed(2)}</strong></td>
+        </tr>
+        <tr>
+          <td><strong>Till Date Cons (CR)</strong></td>
+          ${areas.map(a => `<td class="center">${Number(cons[a]||0).toFixed(2)}</td>`).join('')}
+          <td class="center"><strong>${totalCons.toFixed(2)}</strong></td>
+        </tr>
+        <tr>
+          <td><strong>Balance (CR)</strong></td>
+          ${areas.map((a,i) => `<td class="center" style="color:${bal[i]<0?'#e11d48':'#10b981'};font-weight:700">${bal[i].toFixed(2)}</td>`).join('')}
+          <td class="center" style="color:${totalBal<0?'#e11d48':'#10b981'};font-weight:700"><strong>${totalBal.toFixed(2)}</strong></td>
+        </tr>
+        <tr>
+          <td><strong>% Consumed</strong></td>
+          ${areas.map(a => {
+            const pct = alloc[a] > 0 ? (cons[a]/alloc[a]*100).toFixed(1) : '0.0';
+            const col = pct > 80 ? '#e11d48' : pct > 50 ? '#f59e0b' : '#10b981';
+            return `<td class="center" style="color:${col};font-weight:700">${pct}%</td>`;
+          }).join('')}
+          <td class="center" style="font-weight:700">${totalAlloc > 0 ? (totalCons/totalAlloc*100).toFixed(1) : '0.0'}%</td>
+        </tr>
+      `;
+
+      /* Charts */
+      await ensureChartsLoaded();
+      if(!window.Chart) return;
+
+      const prPo = db.prPo;
+      const prPoTotal = (prPo.rfqPending||0)+(prPo.rfqCreated||0)+(prPo.trSub||0)+(prPo.poPending||0)+(prPo.poCreated||0);
+      document.getElementById('prPoTitleTotal').textContent = integer(prPoTotal);
+
+      const prRel = db.prRelease;
+      const prRelTotal = (prRel.prReleased||0)+(prRel.withHod||0)+(prRel.storeQuery||0)+(prRel.withStore||0)+(prRel.withPlanner||0)+(prRel.withTc||0);
+      document.getElementById('prReleaseTitleTotal').textContent = integer(prRelTotal);
+
+      const chartDefaults = {
+        animation: { duration: 700, easing: 'easeInOutQuart' },
+        plugins: {
+          legend: { labels: { font: { family: 'Inter', size: 12, weight: '600' }, padding: 16, usePointStyle: true, pointStyleWidth: 10 } },
+          tooltip: { titleFont: { family: 'Inter', weight: '700' }, bodyFont: { family: 'Inter' }, padding: 10, cornerRadius: 10, displayColors: true }
+        }
+      };
+
+      /* PR-PO Status – horizontal bar */
+      if(charts.prPo) charts.prPo.destroy();
+      const prPoCtx = document.getElementById('prPoChart').getContext('2d');
+      charts.prPo = new Chart(prPoCtx, {
+        type: 'bar',
+        data: {
+          labels: ['RFQ Pending','RFQ Created','TR Submitted','PO Pending','PO Created'],
+          datasets: [{
+            label: 'Count',
+            data: [prPo.rfqPending||0, prPo.rfqCreated||0, prPo.trSub||0, prPo.poPending||0, prPo.poCreated||0],
+            backgroundColor: ['#fef3c7','#bfdbfe','#e0e7ff','#fecdd3','#d1fae5'],
+            borderColor:     ['#f59e0b','#3b82f6','#8b5cf6','#f43f5e','#10b981'],
+            borderWidth: 2,
+            borderRadius: 8,
+            borderSkipped: false
+          }]
+        },
+        options: {
+          ...chartDefaults,
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            ...chartDefaults.plugins,
+            legend: { display: false },
+            tooltip: { ...chartDefaults.plugins.tooltip, callbacks: { label: ctx => ` Count: ${integer(ctx.parsed.x)}` } }
+          },
+          scales: {
+            x: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { font: { family: 'Inter', weight: '600' } } },
+            y: { grid: { display: false }, ticks: { font: { family: 'Inter', size: 12, weight: '600' } } }
+          }
+        }
+      });
+
+      /* PR Release Status – doughnut */
+      if(charts.prRelease) charts.prRelease.destroy();
+      const prRelCtx = document.getElementById('prReleaseChart').getContext('2d');
+      charts.prRelease = new Chart(prRelCtx, {
+        type: 'doughnut',
+        data: {
+          labels: ['PR Released','With HOD','Store Query','With Store','With Planner','With TC'],
+          datasets: [{
+            data: [prRel.prReleased||0, prRel.withHod||0, prRel.storeQuery||0, prRel.withStore||0, prRel.withPlanner||0, prRel.withTc||0],
+            backgroundColor: ['#10b981','#3b82f6','#f59e0b','#8b5cf6','#d71920','#06b6d4'],
+            borderColor: '#fff',
+            borderWidth: 3,
+            hoverOffset: 10
+          }]
+        },
+        options: {
+          ...chartDefaults,
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '62%',
+          plugins: {
+            ...chartDefaults.plugins,
+            legend: { ...chartDefaults.plugins.legend, position: 'right' },
+            tooltip: { ...chartDefaults.plugins.tooltip, callbacks: { label: ctx => ` ${ctx.label}: ${integer(ctx.parsed)}` } }
+          }
+        }
+      });
+
+      /* Budget Pie – area consumption share */
+      const consValues = areas.map(a => Number(cons[a]||0));
+      const pieColors  = ['#2563eb','#10b981','#f59e0b','#8b5cf6','#d71920','#06b6d4','#f43f5e','#0f172a'];
+      if(charts.budgetPie) charts.budgetPie.destroy();
+      const pieCtx = document.getElementById('budgetPieChart').getContext('2d');
+      charts.budgetPie = new Chart(pieCtx, {
+        type: 'pie',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: consValues,
+            backgroundColor: pieColors,
+            borderColor: '#fff',
+            borderWidth: 3,
+            hoverOffset: 12
+          }]
+        },
+        options: {
+          ...chartDefaults,
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            ...chartDefaults.plugins,
+            legend: { ...chartDefaults.plugins.legend, position: 'right' },
+            tooltip: { ...chartDefaults.plugins.tooltip, callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed.toFixed(2)} CR (${totalCons > 0 ? (ctx.parsed/totalCons*100).toFixed(1) : 0}%)` } }
+          }
+        }
+      });
+
+      /* Budget Bar – grouped allocation vs consumption */
+      if(charts.budgetBar) charts.budgetBar.destroy();
+      const barCtx = document.getElementById('budgetBarChart').getContext('2d');
+      charts.budgetBar = new Chart(barCtx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Allocation (CR)',
+              data: areas.map(a => Number(alloc[a]||0)),
+              backgroundColor: 'rgba(37,99,235,0.18)',
+              borderColor: '#2563eb',
+              borderWidth: 2,
+              borderRadius: 6,
+              borderSkipped: false
+            },
+            {
+              label: 'Consumed (CR)',
+              data: consValues,
+              backgroundColor: areas.map((a,i) => {
+                const pct = alloc[a] > 0 ? cons[a]/alloc[a] : 0;
+                return pct > 0.8 ? 'rgba(225,29,72,0.75)' : pct > 0.5 ? 'rgba(245,158,11,0.75)' : 'rgba(16,185,129,0.75)';
+              }),
+              borderColor: areas.map((a,i) => {
+                const pct = alloc[a] > 0 ? cons[a]/alloc[a] : 0;
+                return pct > 0.8 ? '#e11d48' : pct > 0.5 ? '#f59e0b' : '#10b981';
+              }),
+              borderWidth: 2,
+              borderRadius: 6,
+              borderSkipped: false
+            }
+          ]
+        },
+        options: {
+          ...chartDefaults,
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            ...chartDefaults.plugins,
+            tooltip: { ...chartDefaults.plugins.tooltip, callbacks: { label: ctx => ` ${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(2)} CR` } }
+          },
+          scales: {
+            x: { grid: { display: false }, ticks: { font: { family: 'Inter', weight: '600' }, maxRotation: 0 } },
+            y: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { font: { family: 'Inter' }, callback: v => v.toFixed(2) + ' CR' } }
+          }
+        }
+      });
+    }
+
+    /* ─── ADMIN FORM LOAD / SAVE ─────────────────────────────────── */
+    function loadAdminForm(){
+      const db = state.dashboard;
+      document.getElementById('adBudgetTotal').value  = db.kpi.budgetTotal  ?? '';
+      document.getElementById('adBudgetUsed').value   = db.kpi.budgetUsed   ?? '';
+      document.getElementById('adBudgetBal').value    = db.kpi.budgetBal    ?? '';
+      document.getElementById('adPoTotal').value      = db.kpi.poTotal      ?? '';
+
+      document.getElementById('adPrPo_rfqPending').value = db.prPo.rfqPending ?? '';
+      document.getElementById('adPrPo_rfqCreated').value = db.prPo.rfqCreated ?? '';
+      document.getElementById('adPrPo_trSub').value      = db.prPo.trSub      ?? '';
+      document.getElementById('adPrPo_poPending').value  = db.prPo.poPending  ?? '';
+      document.getElementById('adPrPo_poCreated').value  = db.prPo.poCreated  ?? '';
+
+      document.getElementById('adPrRel_prReleased').value  = db.prRelease.prReleased  ?? '';
+      document.getElementById('adPrRel_withHod').value     = db.prRelease.withHod     ?? '';
+      document.getElementById('adPrRel_storeQuery').value  = db.prRelease.storeQuery  ?? '';
+      document.getElementById('adPrRel_withStore').value   = db.prRelease.withStore   ?? '';
+      document.getElementById('adPrRel_withPlanner').value = db.prRelease.withPlanner ?? '';
+      document.getElementById('adPrRel_withTc').value      = db.prRelease.withTc      ?? '';
+
+      const al = db.areas.allocation;
+      const co = db.areas.consumption;
+      ['hyd','mh','operation','ph','shift','store','tower','capex'].forEach(k => {
+        document.getElementById(`adAlloc_${k}`).value = al[k] ?? '';
+        document.getElementById(`adCons_${k}`).value  = co[k] ?? '';
+      });
+    }
+
+    async function saveAdminData(){
+      const g = id => Number(document.getElementById(id).value || 0);
+      state.dashboard.kpi.budgetTotal  = g('adBudgetTotal');
+      state.dashboard.kpi.budgetUsed   = g('adBudgetUsed');
+      state.dashboard.kpi.budgetBal    = g('adBudgetBal');
+      state.dashboard.kpi.poTotal      = g('adPoTotal');
+
+      state.dashboard.prPo.rfqPending  = g('adPrPo_rfqPending');
+      state.dashboard.prPo.rfqCreated  = g('adPrPo_rfqCreated');
+      state.dashboard.prPo.trSub       = g('adPrPo_trSub');
+      state.dashboard.prPo.poPending   = g('adPrPo_poPending');
+      state.dashboard.prPo.poCreated   = g('adPrPo_poCreated');
+
+      state.dashboard.prRelease.prReleased  = g('adPrRel_prReleased');
+      state.dashboard.prRelease.withHod     = g('adPrRel_withHod');
+      state.dashboard.prRelease.storeQuery  = g('adPrRel_storeQuery');
+      state.dashboard.prRelease.withStore   = g('adPrRel_withStore');
+      state.dashboard.prRelease.withPlanner = g('adPrRel_withPlanner');
+      state.dashboard.prRelease.withTc      = g('adPrRel_withTc');
+
+      ['hyd','mh','operation','ph','shift','store','tower','capex'].forEach(k => {
+        state.dashboard.areas.allocation[k]  = g(`adAlloc_${k}`);
+        state.dashboard.areas.consumption[k] = g(`adCons_${k}`);
+      });
+
+      await saveDashboardToCloud();
+      refreshDashboard();
+      alert('Dashboard data saved and deployed to cloud successfully!');
+    }
+
+    document.getElementById('requestForm').addEventListener('submit', submitRequest);
+    document.getElementById('reqFiles').addEventListener('change', renderSelectedFiles);
+    document.getElementById('searchInput').addEventListener('input', renderTracker);
+    document.getElementById('filterStatus').addEventListener('change', renderTracker);
+    document.getElementById('filterType').addEventListener('change', renderTracker);
+    ['plReviewQty','plInstalled','plSiteStock','plUom','plUnitValue','plCentralStock','plOpenPr','plOpenPo','plCons2025','plCons2024','plCons2023','plInstalledLocation'].forEach(id => {
+      const el = document.getElementById(id);
+      const evt = el.tagName === 'SELECT' ? 'change' : 'input';
+      el.addEventListener(evt, refreshPlannerMath);
+    });
+    document.getElementById('plRemarks').addEventListener('input', savePlannerDraft);
+    ['reqName','reqArea','reqNeed','reqCalc','reqRisk','reqAlt'].forEach(id => {
+      const el = document.getElementById(id);
+      const eventName = el.tagName === 'SELECT' ? 'change' : 'input';
+      el.addEventListener(eventName, () => {
+        el.classList.remove('input-error');
+        const help = document.getElementById('help' + id.charAt(0).toUpperCase() + id.slice(1));
+        if(help) help.classList.remove('show');
+      });
+    });
+    document.getElementById('plannerPassword').addEventListener('keydown', e => { if(e.key === 'Enter') validatePlannerRole(); });
+    document.addEventListener('keydown', e => {
+      if(e.key === 'Escape'){
+        document.getElementById('successModal').style.display = 'none';
+        closeActionModal();
+      }
+    });
+
+    /* ── App Initialization (waits for Firebase) ── */
+    async function initApp(){
+      setSyncStatus('connecting','Connecting...');
+
+      // Load dashboard from cloud
+      try{
+        if(window._fbReady){
+          const cloudDash = await window._fb.loadDashboard();
+          if(cloudDash) state.dashboard = mergeDeep(state.dashboard, cloudDash);
+        }
+      }catch(e){ console.warn('Dashboard load failed', e); }
+
+      // Start real-time listener for requests
+      if(window._fbReady){
+        _fbUnsubscribe = window._fb.listenRequests(reqs => {
+          reqs.forEach(req => migrateRequests([req]));
+          state.requests = reqs;
+          renderTracker();
+          refreshDashboard();
+          renderPlannerPanel();
+          setSyncStatus('online', 'Cloud Synced (' + reqs.length + ' requests)');
+        });
+      }
+
+      addLineItem();
+      renderPlannerPanel();
+      renderTracker();
+      loadAdminForm();
+      refreshDashboard();
+      applyRoleAccess();
+      if(!currentRole) openRoleModal();
+      else activateSavedTab();
+    }
+
+    // Wait for Firebase module to be ready, then init
+    if(window._fbReady){
+      initApp();
+    } else {
+      window.addEventListener('firebase-ready', initApp, { once: true });
+      window.addEventListener('firebase-error', () => {
+        setSyncStatus('error','Firebase Error');
+        initApp(); // still init app in offline mode
+      }, { once: true });
+      // Fallback: if Firebase takes too long, init anyway after 6 seconds
+      setTimeout(() => {
+        if(!window._fbReady){
+          setSyncStatus('error','Offline Mode');
+          initApp();
+        }
+      }, 6000);
+    }
+  </script>
+</body>
+</html>
