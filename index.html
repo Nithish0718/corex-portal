@@ -82,6 +82,34 @@
 
           async clearRequests(reqIds){
             for(const id of reqIds) await window._fb.deleteRequest(id);
+          },
+
+          // Excel data methods
+          async saveExcelMeta(meta){
+            await db.collection('config').doc('excelMeta').set(meta);
+          },
+
+          async loadExcelMeta(){
+            const snap = await db.collection('config').doc('excelMeta').get();
+            return snap.exists ? snap.data() : null;
+          },
+
+          async saveExcelChunk(index, rows){
+            await db.collection('excelData').doc('chunk_' + index).set({ rows });
+          },
+
+          async loadExcelChunk(index){
+            const snap = await db.collection('excelData').doc('chunk_' + index).get();
+            return snap.exists ? snap.data().rows : null;
+          },
+
+          async clearExcelData(){
+            // Delete meta
+            await db.collection('config').doc('excelMeta').delete();
+            // Delete all chunks (up to 20)
+            for(let i = 0; i < 20; i++){
+              try { await db.collection('excelData').doc('chunk_' + i).delete(); } catch(e){}
+            }
           }
         };
 
@@ -2090,8 +2118,9 @@
     };
 
     function categorizeRow(r) {
-      const pos = (r.poStatus || '').toUpperCase();
-      const ps  = (r.prStatus || '').trim();
+      // Works with both full names (poStatus) and compact names (pos)
+      const pos = ((r.poStatus || r.pos) || '').toUpperCase();
+      const ps  = ((r.prStatus || r.ps)  || '').trim();
       if (pos === 'PO CREATED') return 'PO Created';
       if (pos.includes('RFQ') && pos.includes('PENDING')) return 'RFQ Pending';
       if (pos.includes('RFQ CREATED') || pos.includes('OFFER AWAITING')) return 'RFQ Created';
@@ -2100,6 +2129,29 @@
       if (pos.includes('PO RELESAE') || pos.includes('PO RELEASE')) return 'PO Pending';
       if (['With HOD','Store Query','With Store','With Planner','With TC','Zadd Pending'].includes(ps)) return ps;
       return 'Other';
+    }
+
+    // Normalize any row (compact or full) to full field names for display
+    function normalizeRow(r) {
+      if (r.prStatus !== undefined) return r; // already full format
+      return {
+        prStatus:   r.ps  || '',
+        prNo:       r.pn  || '',
+        matCode:    r.mc  || '',
+        desc:       r.ds  || '',
+        qty:        r.qt  || '',
+        uom:        r.um  || '',
+        totalValue: r.tv  || 0,
+        area:       r.ar  || '',
+        poStatus:   r.pos || '',
+        rfqNo:      r.rq  || '',
+        poDate:     r.pd  || '',
+        poNo:       r.po  || '',
+        delivDate:  r.dd  || '',
+        purchaser:  r.pu  || '',
+        vendor:     r.vn  || '',
+        category:   r.ca  || r.category || ''
+      };
     }
 
     function parseExcelDate(v) {
@@ -2118,18 +2170,16 @@
     async function handleExcelUpload(input) {
       const file = input.files[0];
       if (!file) return;
-      const banner = document.getElementById('excelUploadBanner');
       const progress = document.getElementById('excelProgress');
-      const bar = document.getElementById('excelProgressBar');
-      const ptext = document.getElementById('excelProgressText');
-      const info = document.getElementById('excelFileInfo');
+      const bar      = document.getElementById('excelProgressBar');
+      const ptext    = document.getElementById('excelProgressText');
 
       progress.style.display = 'block';
       bar.style.width = '10%';
+      bar.style.background = 'linear-gradient(90deg,#2563eb,#10b981)';
       ptext.textContent = 'Reading file...';
 
       try {
-        // Load SheetJS from CDN
         if (!window.XLSX) {
           await new Promise((res, rej) => {
             const s = document.createElement('script');
@@ -2147,45 +2197,66 @@
 
         bar.style.width = '70%'; ptext.textContent = 'Processing rows...';
 
-        excelRows = raw.map(r => ({
-          srNo:      r['Sr-No']             || '',
-          prStatus:  r['PR Status']          || '',
-          prDate:    parseExcelDate(r['PR Date']),
-          prNo:      String(r['PR No']       || ''),
-          lineItem:  r['Line Item']          || '',
-          matCode:   String(r['Material Code']|| ''),
-          desc:      r['Description']        || '',
-          qty:       r['PR Qty']             || '',
-          uom:       r['UOM']               || '',
-          unitPrice: r['Unit Price']         || '',
-          totalValue:parseFloat(r['Total Value'])||0,
-          trackId:   r['Tracking ID']        || '',
-          area:      String(r['User Dept']   || '').toUpperCase().trim(),
-          poStatus:  r['PO Status']          || '',
-          rfqNo:     String(r['RFX/RFQ NUMBER']||''),
-          trDate:    parseExcelDate(r['TR Submission Date']),
-          offerDate: parseExcelDate(r['Offer date']),
-          poDate:    parseExcelDate(r['PO Date']),
-          poNo:      String(r['PO No']       || ''),
-          poQty:     r['PO Qty']             || '',
-          delivDate: parseExcelDate(r['PO Delivery Date']),
-          purchaser: r['Purchaser']          || '',
-          vendor:    r['Vendor Details']     || '',
-          category:  ''
-        })).filter(r => r.matCode || r.prNo);
+        // Use compact field names to keep Firestore docs small
+        const compact = raw.map(r => ({
+          ps:  String(r['PR Status']          || '').trim(),
+          pn:  String(r['PR No']              || ''),
+          mc:  String(r['Material Code']      || ''),
+          ds:  String(r['Description']        || '').slice(0, 80),
+          qt:  String(r['PR Qty']             || ''),
+          um:  String(r['UOM']               || ''),
+          tv:  parseFloat(r['Total Value'])   || 0,
+          ar:  String(r['User Dept']          || '').toUpperCase().trim(),
+          pos: String(r['PO Status']          || '').trim(),
+          rq:  String(r['RFX/RFQ NUMBER']     || ''),
+          pd:  parseExcelDate(r['PO Date']),
+          po:  String(r['PO No']              || ''),
+          dd:  parseExcelDate(r['PO Delivery Date']),
+          pu:  String(r['Purchaser']          || '').split(':')[0].trim(),
+          vn:  String(r['Vendor Details']     || '').slice(0, 50),
+          ca:  ''
+        })).filter(r => r.mc || r.pn);
 
-        excelRows.forEach(r => r.category = categorizeRow(r));
+        compact.forEach(r => { r.ca = categorizeRow(r); });
 
-        bar.style.width = '90%'; ptext.textContent = 'Saving...';
+        // Store as normalized full-name rows in memory
+        excelRows = compact.map(normalizeRow);
 
-        // Save to localStorage (compressed)
-        try { localStorage.setItem(EXCEL_KEY, JSON.stringify(excelRows)); } catch(e) { console.warn('Storage full, data not persisted'); }
+        bar.style.width = '90%'; ptext.textContent = 'Saving to cloud...';
+
+        if (window._fbReady) {
+          try {
+            const CHUNK = 100;
+            const chunks = [];
+            for (let i = 0; i < compact.length; i += CHUNK) chunks.push(compact.slice(i, i + CHUNK));
+
+            await window._fb.saveExcelMeta({
+              fileName: file.name,
+              uploadedAt: new Date().toISOString(),
+              totalRows: compact.length,
+              totalChunks: chunks.length
+            });
+
+            for (let i = 0; i < chunks.length; i++) {
+              bar.style.width = (90 + Math.round((i+1) / chunks.length * 9)) + '%';
+              ptext.textContent = `Syncing to cloud... (${i+1}/${chunks.length})`;
+              await window._fb.saveExcelChunk(i, chunks[i]);
+            }
+            console.log(`✅ Excel synced: ${compact.length} rows in ${chunks.length} chunks`);
+          } catch(err) {
+            console.warn('Firebase save failed, using localStorage:', err);
+            try { localStorage.setItem(EXCEL_KEY, JSON.stringify(compact)); } catch(e) {}
+          }
+        } else {
+          try { localStorage.setItem(EXCEL_KEY, JSON.stringify(compact)); } catch(e) {}
+        }
 
         bar.style.width = '100%';
         const dt = new Date().toLocaleString('en-IN');
-        info.textContent = `✅ ${file.name} — ${excelRows.length} rows loaded on ${dt}`;
-        info.style.display = 'block';
-        document.getElementById('clearExcelBtn').style.display = '';
+        const infoEl = document.getElementById('excelFileInfo');
+        if (infoEl) { infoEl.textContent = `✅ ${file.name} — ${excelRows.length} rows synced on ${dt}`; infoEl.style.display = 'block'; }
+        const clearBtn = document.getElementById('clearExcelBtn');
+        if (clearBtn) clearBtn.style.display = '';
         setTimeout(() => { progress.style.display = 'none'; }, 800);
 
         renderExcelDashboard();
@@ -2197,12 +2268,17 @@
       input.value = '';
     }
 
-    function clearExcelData() {
-      if (!confirm('Clear the uploaded Excel data from dashboard?')) return;
+    async function clearExcelData() {
+      if (!confirm('Clear the uploaded Excel data from cloud? All browsers will lose this data.')) return;
       excelRows = [];
       localStorage.removeItem(EXCEL_KEY);
-      document.getElementById('excelFileInfo').style.display = 'none';
-      document.getElementById('clearExcelBtn').style.display = 'none';
+      if (window._fbReady) {
+        try { await window._fb.clearExcelData(); } catch(e) { console.warn('Firebase clear failed', e); }
+      }
+      const infoEl = document.getElementById('excelFileInfo');
+      if(infoEl) infoEl.style.display = 'none';
+      const clearBtn = document.getElementById('clearExcelBtn');
+      if(clearBtn) clearBtn.style.display = 'none';
       document.getElementById('prPoStatusCard').style.display = 'none';
       document.getElementById('prReleaseStatusCard').style.display = 'none';
       document.getElementById('legacyCharts').style.display = '';
@@ -2397,19 +2473,74 @@
       a.click();
     }
 
-    // Load persisted excel data on startup
-    function loadPersistedExcelData() {
+    // Load excel data from Firebase (syncs across all browsers & roles)
+    async function loadPersistedExcelData() {
+      // Helper: safely set element (may not exist for User role)
+      const safeSet = (id, prop, val) => { const el = document.getElementById(id); if(el) el[prop] = val; };
+      const safeShow = (id) => { const el = document.getElementById(id); if(el) el.style.display = ''; };
+      const safeHide = (id) => { const el = document.getElementById(id); if(el) el.style.display = 'none'; };
+
+      if (!window._fbReady) {
+        // Fallback: try localStorage
+        try {
+          const raw = localStorage.getItem(EXCEL_KEY);
+          if (!raw) return;
+          const parsed = JSON.parse(raw);
+          excelRows = parsed.map(normalizeRow);
+          excelRows.forEach(r => { if (!r.category) r.category = categorizeRow(r); });
+          if (excelRows.length) {
+            safeSet('excelFileInfo','textContent', `✅ ${excelRows.length} rows loaded (local cache)`);
+            safeShow('excelFileInfo');
+            safeShow('clearExcelBtn');
+            renderExcelDashboard();
+          }
+        } catch(e) { console.warn('localStorage Excel restore failed', e); }
+        return;
+      }
+
       try {
-        const raw = localStorage.getItem(EXCEL_KEY);
-        if (!raw) return;
-        excelRows = JSON.parse(raw);
-        if (excelRows.length) {
-          document.getElementById('excelFileInfo').textContent = `✅ ${excelRows.length} rows loaded from previous session`;
-          document.getElementById('excelFileInfo').style.display = 'block';
-          document.getElementById('clearExcelBtn').style.display = '';
-          renderExcelDashboard();
+        const meta = await window._fb.loadExcelMeta();
+        if (!meta) return; // No Excel data uploaded yet
+
+        // Show loading indicator on dashboard (visible to ALL users)
+        document.getElementById('prPoStatusCard').style.display = '';
+        document.getElementById('legacyCharts').style.display = 'none';
+        document.getElementById('prPoStatusGrid').innerHTML = `
+          <div style="padding:24px 0;color:#64748b;font-size:.9rem;grid-column:1/-1;display:flex;align-items:center;gap:10px;">
+            <i class="fa-solid fa-spinner fa-spin" style="color:#2563eb;font-size:1.2rem;"></i>
+            <span>Loading <strong>${meta.totalRows}</strong> PR-PO items from cloud...</span>
+          </div>`;
+
+        // Load all chunks
+        const allRows = [];
+        for (let i = 0; i < meta.totalChunks; i++) {
+          const chunk = await window._fb.loadExcelChunk(i);
+          if (chunk) allRows.push(...chunk);
         }
-      } catch(e) { console.warn('Excel restore failed', e); }
+
+        if (!allRows.length) {
+          document.getElementById('prPoStatusCard').style.display = 'none';
+          document.getElementById('legacyCharts').style.display = '';
+          return;
+        }
+
+        excelRows = allRows.map(normalizeRow);
+        excelRows.forEach(r => { if (!r.category) r.category = categorizeRow(r); });
+
+        // Update info in Admin tab (only visible to Planner)
+        const uploadedAt = meta.uploadedAt ? new Date(meta.uploadedAt).toLocaleString('en-IN') : '';
+        safeSet('excelFileInfo', 'textContent', `✅ ${meta.fileName || 'Excel'} — ${excelRows.length} rows · Last uploaded: ${uploadedAt}`);
+        safeShow('excelFileInfo');
+        safeShow('clearExcelBtn');
+
+        renderExcelDashboard();
+        setSyncStatus('online', `Cloud Synced · ${excelRows.length} PR items loaded`);
+
+      } catch(e) {
+        console.warn('Firebase Excel load failed', e);
+        document.getElementById('prPoStatusCard').style.display = 'none';
+        document.getElementById('legacyCharts').style.display = '';
+      }
     }
 
     document.getElementById('prDetailModal').addEventListener('click', function(e) {
