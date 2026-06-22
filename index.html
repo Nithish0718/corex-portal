@@ -2856,6 +2856,7 @@
         closeActionModal();
       }
     });
+    document.getElementById('requestForm').addEventListener('submit', submitRequest);
     document.getElementById('reqFiles').addEventListener('change', renderSelectedFiles);
     document.getElementById('searchInput').addEventListener('input', renderTracker);
     document.getElementById('filterStatus').addEventListener('change', renderTracker);
