@@ -299,6 +299,9 @@
     .priority-badge.high{background:var(--p-high-bg);color:var(--p-high);border-color:#fde68a}
     .priority-badge.medium{background:var(--p-medium-bg);color:var(--p-medium);border-color:#bfdbfe}
     .priority-badge.low{background:var(--p-low-bg);color:var(--p-low);border-color:#bbf7d0}
+    .priority-badge.safety{background:#fefce8;color:#ca8a04;border-color:#fde047}
+    .priority-badge.development{background:#f5f3ff;color:#7c3aed;border-color:#ddd6fe}
+    .priority-badge.project{background:#ecfeff;color:#0891b2;border-color:#a5f3fc}
     .row-critical td{background:#fff5f5 !important;border-left:3px solid var(--p-critical)}
     .row-high td{background:#fffbf0 !important;border-left:3px solid var(--p-high)}
 
@@ -404,7 +407,7 @@
         <div class="nav-right">
           <div class="role-chip" id="syncChip" style="background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.3);color:#f59e0b;"><i class="fa-solid fa-cloud fa-spin"></i> <span id="syncLabel">Connecting...</span></div>
           <div class="role-chip"><i class="fa-solid fa-shield"></i> <span id="roleLabel">Role: Not Selected</span></div>
-          <div class="profile-chip"><i class="fa-regular fa-circle-user"></i> Nithish | Mech Planning</div>
+          <div class="profile-chip"><i class="fa-regular fa-circle-user"></i> Mech Planning</div>
           <button class="btn white sm switch-role" type="button" onclick="openRoleModal(true)"><i class="fa-solid fa-users"></i> Switch Role</button>
         </div>
       </div>
@@ -461,7 +464,10 @@
 
       <!-- Clickable PR-PO Status Cards -->
       <div class="card" id="prPoStatusCard" style="display:none;">
-        <h3 class="card-title"><i class="fa-solid fa-bars-progress"></i> PR-PO Status — Click Any Card to View Details</h3>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+          <h3 class="card-title" style="margin:0;"><i class="fa-solid fa-bars-progress"></i> PR-PO Status — Click Any Card to View Details</h3>
+          <span id="prPoLastUpdated" style="font-size:.8rem;font-weight:700;color:#059669;background:#ecfdf5;border:1px solid #bbf7d0;padding:6px 12px;border-radius:999px;display:inline-flex;align-items:center;gap:6px;"><i class="fa-solid fa-clock-rotate-left"></i> <span id="prPoLastUpdatedText">—</span></span>
+        </div>
         <div id="prPoStatusGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;margin-bottom:18px;"></div>
         <div class="grid-2">
           <div><div class="card-title" style="font-size:.85rem;margin-bottom:10px;"><i class="fa-solid fa-chart-pie"></i> Status Distribution</div><div class="chart-wrap" style="min-height:280px;"><canvas id="prPoChart"></canvas></div></div>
@@ -545,16 +551,19 @@
               <div class="field-help" id="helpReqArea">Operational area is required.</div>
             </div>
             <div class="field">
-              <label for="reqPriority">Request Priority</label>
+              <label for="reqPriority">Request Priority / Category</label>
               <select id="reqPriority" required>
-                <option value="Medium">🔵 Medium — Planned Requirement</option>
-                <option value="High">🟡 High — Urgent but not Critical</option>
-                <option value="Critical">🔴 Critical — Production at Risk</option>
+                <option value="Critical">🔴 Critical — Breakdown / Production at Risk</option>
+                <option value="High">🟠 High — Urgent but not Critical</option>
+                <option value="Medium" selected>🔵 Medium — Planned Requirement</option>
                 <option value="Low">🟢 Low — Stock Replenishment</option>
+                <option value="Safety">🦺 Safety Item — Statutory / Safety Critical</option>
+                <option value="Development">🛠️ Development Item — Reliability Improvement</option>
+                <option value="Project">📐 Project — Capex / New Project</option>
               </select>
             </div>
             <div class="field">
-              <label for="reqNeedDate">Material Required By Date</label>
+              <label for="reqNeedDate">When Material is Required (Delivery Date)</label>
               <input id="reqNeedDate" type="date" />
             </div>
           </div>
@@ -655,9 +664,12 @@
             <select id="filterPriority">
               <option value="All">All Priorities</option>
               <option value="Critical">🔴 Critical</option>
-              <option value="High">🟡 High</option>
+              <option value="High">🟠 High</option>
               <option value="Medium">🔵 Medium</option>
               <option value="Low">🟢 Low</option>
+              <option value="Safety">🦺 Safety Item</option>
+              <option value="Development">🛠️ Development</option>
+              <option value="Project">📐 Project</option>
             </select>
             <select id="filterArea">
               <option value="All">All Areas</option>
@@ -1468,17 +1480,24 @@
     function priorityBadge(priority){
       const p = (priority || 'Medium').toLowerCase();
       const cfg = {
-        critical: { cls:'critical', icon:'fa-circle-exclamation', label:'Critical' },
-        high:     { cls:'high',     icon:'fa-arrow-up',           label:'High'     },
-        medium:   { cls:'medium',   icon:'fa-minus',              label:'Medium'   },
-        low:      { cls:'low',      icon:'fa-arrow-down',         label:'Low'      },
+        critical:    { cls:'critical', icon:'fa-circle-exclamation', label:'Critical' },
+        high:        { cls:'high',     icon:'fa-arrow-up',           label:'High'     },
+        medium:      { cls:'medium',   icon:'fa-minus',              label:'Medium'   },
+        low:         { cls:'low',      icon:'fa-arrow-down',         label:'Low'      },
+        safety:      { cls:'safety',   icon:'fa-helmet-safety',      label:'Safety'   },
+        development: { cls:'development', icon:'fa-screwdriver-wrench', label:'Development' },
+        project:     { cls:'project',  icon:'fa-compass-drafting',   label:'Project'  },
       };
       const c = cfg[p] || cfg.medium;
       return `<span class="priority-badge ${c.cls}"><i class="fa-solid ${c.icon}"></i>${c.label}</span>`;
     }
 
     function priorityOrder(p){
-      return { Critical:0, High:1, Medium:2, Low:3 }[p] ?? 2;
+      return { Critical:0, High:1, Safety:2, Medium:3, Development:4, Project:5, Low:6 }[p] ?? 3;
+    }
+
+    function priorityColor(p){
+      return { Critical:'#dc2626', High:'#d97706', Medium:'#2563eb', Low:'#059669', Safety:'#ca8a04', Development:'#7c3aed', Project:'#0891b2' }[p] || '#2563eb';
     }
 
     function getFilteredRequests(){
@@ -1551,8 +1570,7 @@
           </tr>
         `).join('');
 
-        const priorityColors = { Critical:'#dc2626', High:'#d97706', Medium:'#2563eb', Low:'#059669' };
-        const pColor = priorityColors[priority] || '#2563eb';
+        const pColor = priorityColor(priority);
 
         wrap.insertAdjacentHTML('beforeend', `
           <div class="request-card" style="border-left:3px solid ${pColor};">
@@ -1867,7 +1885,7 @@
           </tr>`).join('');
 
         const priority = req.reqPriority || 'Medium';
-        const pColor = {Critical:'#dc2626',High:'#d97706',Medium:'#2563eb',Low:'#059669'}[priority]||'#2563eb';
+        const pColor = priorityColor(priority);
 
         return `
           <div class="page">
@@ -2555,11 +2573,14 @@
         }
 
         bar.style.width = '100%';
-        const dt = new Date().toLocaleString('en-IN');
+        const dt = new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
         const infoEl = document.getElementById('excelFileInfo');
         if (infoEl) { infoEl.textContent = `✅ ${file.name} — ${excelRows.length} rows synced on ${dt}`; infoEl.style.display = 'block'; }
         const clearBtn = document.getElementById('clearExcelBtn');
         if (clearBtn) clearBtn.style.display = '';
+        // Update dashboard Last Updated timestamp
+        const lastUpdEl = document.getElementById('prPoLastUpdatedText');
+        if(lastUpdEl) lastUpdEl.textContent = 'PR-PO Data Updated: ' + dt;
         setTimeout(() => { progress.style.display = 'none'; }, 800);
 
         renderExcelDashboard();
@@ -2831,10 +2852,14 @@
         excelRows.forEach(r => { if (!r.category) r.category = categorizeRow(r); });
 
         // Update info in Admin tab (only visible to Planner)
-        const uploadedAt = meta.uploadedAt ? new Date(meta.uploadedAt).toLocaleString('en-IN') : '';
+        const uploadedAt = meta.uploadedAt ? new Date(meta.uploadedAt).toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
         safeSet('excelFileInfo', 'textContent', `✅ ${meta.fileName || 'Excel'} — ${excelRows.length} rows · Last uploaded: ${uploadedAt}`);
         safeShow('excelFileInfo');
         safeShow('clearExcelBtn');
+
+        // Show "Last Updated" on dashboard for ALL users
+        const lastUpdEl = document.getElementById('prPoLastUpdatedText');
+        if(lastUpdEl) lastUpdEl.textContent = uploadedAt ? 'PR-PO Data Updated: ' + uploadedAt : 'Data loaded';
 
         renderExcelDashboard();
         setSyncStatus('online', `Cloud Synced · ${excelRows.length} PR items loaded`);
@@ -2956,7 +2981,7 @@
               cell([txt('Date',{bold:true,size:14,color:'475569'})], {shade:lightFill, width:2500}),
               cell([txt(req.date||'',{size:16})], {width:2500}),
               cell([txt('Priority',{bold:true,size:14,color:'475569'})], {shade:lightFill, width:2500}),
-              cell([txt(req.reqPriority||'Medium',{bold:true,size:16,color:{Critical:'dc2626',High:'d97706',Medium:'2563eb',Low:'059669'}[req.reqPriority]||'2563eb'})], {width:2617}),
+              cell([txt(req.reqPriority||'Medium',{bold:true,size:16,color:{Critical:'dc2626',High:'d97706',Medium:'2563eb',Low:'059669',Safety:'ca8a04',Development:'7c3aed',Project:'0891b2'}[req.reqPriority]||'2563eb'})], {width:2617}),
             ]}),
             new TableRow({ children:[
               cell([txt('Requested By',{bold:true,size:14,color:'475569'})], {shade:lightFill, width:2500}),
