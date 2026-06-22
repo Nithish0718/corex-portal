@@ -404,7 +404,7 @@
         <div class="nav-right">
           <div class="role-chip" id="syncChip" style="background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.3);color:#f59e0b;"><i class="fa-solid fa-cloud fa-spin"></i> <span id="syncLabel">Connecting...</span></div>
           <div class="role-chip"><i class="fa-solid fa-shield"></i> <span id="roleLabel">Role: Not Selected</span></div>
-          <div class="profile-chip"><i class="fa-regular fa-circle-user"></i> Team Mech Planning</div>
+          <div class="profile-chip"><i class="fa-regular fa-circle-user"></i> Nithish | Mech Planning</div>
           <button class="btn white sm switch-role" type="button" onclick="openRoleModal(true)"><i class="fa-solid fa-users"></i> Switch Role</button>
         </div>
       </div>
@@ -965,20 +965,42 @@
 
     /* ── Firebase: save one request ── */
     async function saveState(reqId){
-      if(!window._fbReady){ return; }
+      // Wait up to 8 seconds for Firebase to be ready
+      if(!window._fbReady){
+        let waited = 0;
+        while(!window._fbReady && waited < 8000){
+          await new Promise(r => setTimeout(r, 200));
+          waited += 200;
+        }
+        if(!window._fbReady){
+          setSyncStatus('error','Offline — Request saved locally only');
+          // Save to localStorage as fallback so data is not lost
+          try{ localStorage.setItem('corexPendingReq_'+reqId, JSON.stringify(state.requests.find(r=>r.id===reqId))); }catch(e){}
+          return;
+        }
+      }
       setSyncStatus('saving', 'Saving...');
       try{
         if(reqId){
           const req = state.requests.find(r => r.id === reqId);
           if(req) await window._fb.saveRequest(req);
         } else {
-          // save dashboard config only
           await window._fb.saveDashboard(state.dashboard);
         }
         setSyncStatus('online', 'Cloud Synced');
+        // Clear any pending localStorage backup
+        try{ localStorage.removeItem('corexPendingReq_'+reqId); }catch(e){}
       }catch(err){
         console.error('Firebase save error', err);
-        setSyncStatus('error', 'Sync Failed');
+        setSyncStatus('error', 'Sync Failed — Check connection');
+        // Retry once after 2 seconds
+        setTimeout(async () => {
+          try{
+            const req = state.requests.find(r => r.id === reqId);
+            if(req) await window._fb.saveRequest(req);
+            setSyncStatus('online','Cloud Synced (retry)');
+          }catch(e){ setSyncStatus('error','Sync Failed — Upload to GitHub again'); }
+        }, 2000);
       }
     }
 
@@ -1223,7 +1245,10 @@
         <td style="text-align:center"><button type="button" class="btn delete-line" onclick="removeLineItem(this)"><i class="fa-solid fa-trash-can"></i> Delete</button></td>
       `;
       tbody.appendChild(tr);
-      tr.querySelector('.mat-code').addEventListener('input', function(){ this.value = this.value.replace(/\D/g, '').slice(0, 9); this.classList.remove('input-error'); });
+      tr.querySelector('.mat-code').addEventListener('input', function(){
+        this.value = this.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 18).toUpperCase();
+        this.classList.remove('input-error');
+      });
       ['.mat-desc','.mat-type','.mat-qty'].forEach(selector => {
         const el = tr.querySelector(selector);
         const evt = el.tagName === 'SELECT' ? 'change' : 'input';
@@ -1245,16 +1270,21 @@
 
     function readLineItems(){
       const rows = [...document.querySelectorAll('#itemRows tr')];
+      if(!rows.length){ alert('Please add at least one line item.'); return null; }
       const items = [];
       let valid = true;
-      rows.forEach(row => {
-        const codeEl = row.querySelector('.mat-code');
-        const descEl = row.querySelector('.mat-desc');
-        const typeEl = row.querySelector('.mat-type');
-        const qtyEl = row.querySelector('.mat-qty');
-        const installedEl = row.querySelector('.mat-installed');
-        const siteEl = row.querySelector('.mat-site');
-        const uomEl = row.querySelector('.mat-uom');
+      let errorMessages = [];
+      rows.forEach((row, idx) => {
+        const codeEl     = row.querySelector('.mat-code');
+        const descEl     = row.querySelector('.mat-desc');
+        const typeEl     = row.querySelector('.mat-type');
+        const qtyEl      = row.querySelector('.mat-qty');
+        const installedEl= row.querySelector('.mat-installed');
+        const siteEl     = row.querySelector('.mat-site');
+        const uomEl      = row.querySelector('.mat-uom');
+        const locationEl = row.querySelector('.mat-location');
+        const rowNum = idx + 1;
+
         const item = {
           id: generateLineId(),
           matCode: codeEl.value.trim(),
@@ -1262,26 +1292,47 @@
           type: typeEl.value,
           uom: uomEl.value,
           qty: Number(qtyEl.value || 0),
-          installed: Number(installedEl.value || 0),
-          siteStock: Number(siteEl.value || 0),
-          location: row.querySelector('.mat-location').value.trim(),
+          installed: Number(installedEl?.value || 0),
+          siteStock: Number(siteEl?.value || 0),
+          location: locationEl?.value.trim() || '',
           status: 'Pending Review',
           planner: {
             reviewQty: Number(qtyEl.value || 0),
-            installedReview: Number(installedEl.value || 0),
-            siteStockReview: Number(siteEl.value || 0),
+            installedReview: Number(installedEl?.value || 0),
+            siteStockReview: Number(siteEl?.value || 0),
             uomReview: uomEl.value,
-            installedLocation: row.querySelector('.mat-location').value.trim(),
+            installedLocation: locationEl?.value.trim() || '',
             cons2023: 0
           }
         };
-        if(!/^\d{9}$/.test(item.matCode)){ codeEl.classList.add('input-error'); valid = false; }
-        if(!item.desc){ descEl.classList.add('input-error'); valid = false; }
-        if(!item.type){ typeEl.classList.add('input-error'); valid = false; }
-        if(item.qty < 1){ qtyEl.classList.add('input-error'); valid = false; }
+
+        // Validate — mat code: at least 5 chars, alphanumeric
+        if(!item.matCode || item.matCode.length < 5){
+          codeEl.classList.add('input-error');
+          errorMessages.push(`Row ${rowNum}: Material Code must be at least 5 characters`);
+          valid = false;
+        }
+        if(!item.desc){
+          descEl.classList.add('input-error');
+          errorMessages.push(`Row ${rowNum}: Description is required`);
+          valid = false;
+        }
+        if(!item.type){
+          typeEl.classList.add('input-error');
+          errorMessages.push(`Row ${rowNum}: Type must be selected`);
+          valid = false;
+        }
+        if(item.qty < 1){
+          qtyEl.classList.add('input-error');
+          errorMessages.push(`Row ${rowNum}: Quantity must be at least 1`);
+          valid = false;
+        }
         items.push(item);
       });
-      if(!valid){ alert('Please correct highlighted line item fields. Material code must be 9 digits and quantity must be more than 0.'); return null; }
+      if(!valid){
+        alert('⚠️ Please fix the following:\n\n' + errorMessages.join('\n'));
+        return null;
+      }
       return items;
     }
 
@@ -1310,6 +1361,7 @@
       const reqAltEl      = document.getElementById('reqAlt');
       const reqPriorityEl = document.getElementById('reqPriority');
       const reqNeedDateEl = document.getElementById('reqNeedDate');
+
       const reqName     = reqNameEl.value.trim();
       const reqArea     = reqAreaEl.value;
       const reqNeed     = reqNeedEl.value.trim();
@@ -1318,16 +1370,27 @@
       const reqAlt      = reqAltEl.value.trim();
       const reqPriority = reqPriorityEl?.value || 'Medium';
       const reqNeedDate = reqNeedDateEl?.value || '';
+
+      // Step 1: Validate general fields first
+      let generalErrors = [];
+      if(!reqName){ markInvalid(reqNameEl,'helpReqName'); generalErrors.push('Requested By name'); }
+      if(!reqArea){ markInvalid(reqAreaEl,'helpReqArea'); generalErrors.push('Operational Area'); }
+      if(!reqNeed){ markInvalid(reqNeedEl,'helpReqNeed'); generalErrors.push('Business Case (Why needed)'); }
+      if(!reqCalc){ markInvalid(reqCalcEl,'helpReqCalc'); generalErrors.push('Qty Logic (How decided)'); }
+      if(!reqRisk){ markInvalid(reqRiskEl,'helpReqRisk'); generalErrors.push('Risk of non-availability'); }
+      if(!reqAlt) { markInvalid(reqAltEl, 'helpReqAlt');  generalErrors.push('Alternative available'); }
+
+      if(generalErrors.length > 0){
+        alert('⚠️ Please fill in the following required fields:\n\n• ' + generalErrors.join('\n• ') + '\n\nScroll up to check highlighted fields.');
+        reqNameEl.scrollIntoView({ behavior:'smooth', block:'center' });
+        return null;
+      }
+
+      // Step 2: Validate line items
       const items = readLineItems();
       if(!items) return null;
-      let valid = true;
-      if(!reqName){ markInvalid(reqNameEl,'helpReqName'); valid = false; }
-      if(!reqArea){ markInvalid(reqAreaEl,'helpReqArea'); valid = false; }
-      if(!reqNeed){ markInvalid(reqNeedEl,'helpReqNeed'); valid = false; }
-      if(!reqCalc){ markInvalid(reqCalcEl,'helpReqCalc'); valid = false; }
-      if(!reqRisk){ markInvalid(reqRiskEl,'helpReqRisk'); valid = false; }
-      if(!reqAlt){ markInvalid(reqAltEl,'helpReqAlt'); valid = false; }
-      if(!valid){ alert('Please complete all mandatory fields in General Information and Business Case sections.'); return null; }
+
+      // Step 3: Read attachments
       const attachments = await readAttachments();
       return { id: generateRequestId(), date: formatDate(), reqName, reqArea, reqNeed, reqCalc, reqRisk, reqAlt, reqPriority, reqNeedDate, attachments, items };
     }
@@ -1350,18 +1413,29 @@
       const submitBtn = event.target.querySelector('button[type="submit"]');
       submitBtn.disabled = true;
       submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+
       try{
         const payload = await buildRequestFromForm();
-        if(!payload) return;
+        if(!payload){
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = '<i class="fa-solid fa-arrow-right"></i> Submit to Planning Review';
+          return;
+        }
+
+        // Add to local state immediately so user sees it right away
         state.requests.unshift(payload);
-        await saveState(payload.id);
-        resetRequestForm();
-        refreshDashboard();
         renderTracker();
+        refreshDashboard();
+
+        // Now save to Firebase
+        await saveState(payload.id);
+
+        resetRequestForm();
         document.getElementById('successModal').style.display = 'flex';
+
       }catch(err){
-        console.error(err);
-        alert('Attachment read failed. Please try with smaller files or check browser permissions.');
+        console.error('Submit error:', err);
+        alert('❌ Error: ' + err.message + '\n\nYour request was added locally. Please check your internet connection and refresh the page.');
       }finally{
         submitBtn.disabled = false;
         submitBtn.innerHTML = '<i class="fa-solid fa-arrow-right"></i> Submit to Planning Review';
@@ -1370,12 +1444,9 @@
 
     function closeSuccessModal(){
       document.getElementById('successModal').style.display = 'none';
-      const btn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes("'track'"));
-      if(currentRole === 'planner') switchTab('track', btn);
-      else {
-        const dashBtn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes("'dash'"));
-        switchTab('dash', dashBtn);
-      }
+      // Always go to My Requests tab so user can see their submitted request
+      const trackBtn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes("'track'"));
+      if(trackBtn) switchTab('track', trackBtn);
     }
 
     function renderSelectedFiles(){
@@ -3127,6 +3198,14 @@
     async function initApp(){
       setSyncStatus('connecting','Connecting...');
 
+      // ⚠️ Warn if running from local file — Firebase won't sync
+      if(window.location.protocol === 'file:'){
+        const banner = document.createElement('div');
+        banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#dc2626;color:#fff;padding:10px 20px;text-align:center;font-family:Arial;font-size:13px;font-weight:700;';
+        banner.innerHTML = '⚠️ You are opening this file from your local computer. For full functionality with cloud sync, use the live link: <a href="https://nithish0718.github.io/corex-portal/" style="color:#fef08a;text-decoration:underline;" target="_blank">https://nithish0718.github.io/corex-portal/</a> &nbsp;&nbsp; <button onclick="this.parentElement.remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;padding:4px 10px;border-radius:4px;cursor:pointer;font-weight:700;">✕ Dismiss</button>';
+        document.body.prepend(banner);
+      }
+
       // Load dashboard from cloud
       try{
         if(window._fbReady){
@@ -3137,14 +3216,19 @@
 
       // Start real-time listener for requests
       if(window._fbReady){
+        setSyncStatus('connecting','Loading requests...');
         _fbUnsubscribe = window._fb.listenRequests(reqs => {
           reqs.forEach(req => migrateRequests([req]));
           state.requests = reqs;
           renderTracker();
           refreshDashboard();
           renderPlannerPanel();
-          setSyncStatus('online', 'Cloud Synced (' + reqs.length + ' requests)');
+          const count = reqs.length;
+          setSyncStatus('online', 'Cloud Synced · ' + count + ' request' + (count!==1?'s':''));
         });
+      } else {
+        // Firebase not ready — show warning
+        setSyncStatus('error', 'Not connected — requests may not sync');
       }
 
       addLineItem();
