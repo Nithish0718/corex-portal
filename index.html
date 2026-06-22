@@ -922,6 +922,11 @@
     const ROLE_KEY = 'corexPortalV26_role';
     const PLANNER_PASSWORD = 'Welcome@2026';
 
+    /* ── Safe localStorage wrappers (prevent crashes on local files / restricted browsers) ── */
+    function lsGet(key){ try{ return localStorage.getItem(key); }catch(e){ return null; } }
+    function lsSet(key,val){ try{ localStorage.setItem(key,val); return true; }catch(e){ return false; } }
+    function lsRemove(key){ try{ localStorage.removeItem(key); }catch(e){} }
+
     const defaultDashboard = {
       kpi: { budgetTotal: 10.96, budgetUsed: 2.30, budgetBal: 8.66, poTotal: 1723 },
       prPo: { rfqPending: 54, rfqCreated: 21, trSub: 44, poPending: 5, poCreated: 1723 },
@@ -941,7 +946,7 @@
     let charts = { prPo:null, prRelease:null, budgetPie:null, budgetBar:null };
     let plannerContext = { requestId:null, itemId:null };
     let pendingPlannerAction = null;
-    let currentRole = localStorage.getItem(ROLE_KEY) || '';
+    let currentRole = lsGet(ROLE_KEY) || '';
     let _fbUnsubscribe = null;
 
     /* ── Sync status UI ── */
@@ -975,7 +980,7 @@
         if(!window._fbReady){
           setSyncStatus('error','Offline — Request saved locally only');
           // Save to localStorage as fallback so data is not lost
-          try{ localStorage.setItem('corexPendingReq_'+reqId, JSON.stringify(state.requests.find(r=>r.id===reqId))); }catch(e){}
+          lsSet('corexPendingReq_'+reqId, JSON.stringify(state.requests.find(r=>r.id===reqId)));
           return;
         }
       }
@@ -989,7 +994,7 @@
         }
         setSyncStatus('online', 'Cloud Synced');
         // Clear any pending localStorage backup
-        try{ localStorage.removeItem('corexPendingReq_'+reqId); }catch(e){}
+        lsRemove('corexPendingReq_'+reqId);
       }catch(err){
         console.error('Firebase save error', err);
         setSyncStatus('error', 'Sync Failed — Check connection');
@@ -1089,7 +1094,7 @@
 
     function chooseRole(role){
       currentRole = role;
-      localStorage.setItem(ROLE_KEY, role);
+      lsSet(ROLE_KEY, role);
       document.getElementById('roleModal').style.display = 'none';
       applyRoleAccess();
       activateSavedTab();
@@ -1124,7 +1129,7 @@
       document.querySelectorAll('[data-role="planner"]').forEach(el => el.classList.toggle('hidden', !isPlanner));
       // Hide planner action buttons inside tracker when user is logged in
       document.querySelectorAll('.planner-only').forEach(el => el.classList.toggle('hidden', !isPlanner));
-      const activeTab = localStorage.getItem(TAB_KEY) || 'dash';
+      const activeTab = lsGet(TAB_KEY) || 'dash';
       if(!isPlanner && ['planner','admin'].includes(activeTab)){
         const dashBtn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes("'dash'"));
         switchTab('dash', dashBtn);
@@ -1143,7 +1148,7 @@
       if(target) target.classList.remove('hidden');
       document.querySelectorAll('[data-tab-btn]').forEach(b => b.classList.remove('active'));
       if(btn) btn.classList.add('active');
-      localStorage.setItem(TAB_KEY, id);
+      lsSet(TAB_KEY, id);
       if(id === 'track') renderTracker();
       if(id === 'dash') refreshDashboard();
       if(id === 'admin') loadAdminForm();
@@ -1151,7 +1156,7 @@
     }
 
     function activateSavedTab(){
-      const id = localStorage.getItem(TAB_KEY) || 'dash';
+      const id = lsGet(TAB_KEY) || 'dash';
       const safeId = (currentRole !== 'planner' && ['planner','admin'].includes(id)) ? 'dash' : id;
       const btn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes(`'${safeId}'`)) || document.querySelector('[data-tab-btn]');
       switchTab(safeId, btn);
@@ -2543,10 +2548,10 @@
             console.log(`✅ Excel synced: ${compact.length} rows in ${chunks.length} chunks`);
           } catch(err) {
             console.warn('Firebase save failed, using localStorage:', err);
-            try { localStorage.setItem(EXCEL_KEY, JSON.stringify(compact)); } catch(e) {}
+            lsSet(EXCEL_KEY, JSON.stringify(compact));
           }
         } else {
-          try { localStorage.setItem(EXCEL_KEY, JSON.stringify(compact)); } catch(e) {}
+          lsSet(EXCEL_KEY, JSON.stringify(compact));
         }
 
         bar.style.width = '100%';
@@ -2569,7 +2574,7 @@
     async function clearExcelData() {
       if (!confirm('Clear the uploaded Excel data from cloud? All browsers will lose this data.')) return;
       excelRows = [];
-      localStorage.removeItem(EXCEL_KEY);
+      lsRemove(EXCEL_KEY);
       if (window._fbReady) {
         try { await window._fb.clearExcelData(); } catch(e) { console.warn('Firebase clear failed', e); }
       }
@@ -2781,7 +2786,7 @@
       if (!window._fbReady) {
         // Fallback: try localStorage
         try {
-          const raw = localStorage.getItem(EXCEL_KEY);
+          const raw = lsGet(EXCEL_KEY);
           if (!raw) return;
           const parsed = JSON.parse(raw);
           excelRows = parsed.map(normalizeRow);
@@ -3206,6 +3211,14 @@
         document.body.prepend(banner);
       }
 
+      // ── SET UP FORM FIRST (independent of Firebase) so user can always submit ──
+      try{ addLineItem(); }catch(e){ console.error('addLineItem failed', e); }
+      try{ renderPlannerPanel(); }catch(e){}
+      try{ renderTracker(); }catch(e){}
+      try{ loadAdminForm(); }catch(e){}
+      try{ refreshDashboard(); }catch(e){}
+      try{ applyRoleAccess(); }catch(e){}
+
       // Load dashboard from cloud
       try{
         if(window._fbReady){
@@ -3218,26 +3231,21 @@
       if(window._fbReady){
         setSyncStatus('connecting','Loading requests...');
         _fbUnsubscribe = window._fb.listenRequests(reqs => {
-          reqs.forEach(req => migrateRequests([req]));
-          state.requests = reqs;
-          renderTracker();
-          refreshDashboard();
-          renderPlannerPanel();
-          const count = reqs.length;
-          setSyncStatus('online', 'Cloud Synced · ' + count + ' request' + (count!==1?'s':''));
+          try{
+            reqs.forEach(req => migrateRequests([req]));
+            state.requests = reqs;
+            renderTracker();
+            refreshDashboard();
+            renderPlannerPanel();
+            const count = reqs.length;
+            setSyncStatus('online', 'Cloud Synced · ' + count + ' request' + (count!==1?'s':''));
+          }catch(e){ console.error('Listener render failed', e); }
         });
       } else {
-        // Firebase not ready — show warning
         setSyncStatus('error', 'Not connected — requests may not sync');
       }
 
-      addLineItem();
-      renderPlannerPanel();
-      renderTracker();
-      loadAdminForm();
-      refreshDashboard();
-      loadPersistedExcelData(); // restore Excel data if previously uploaded
-      applyRoleAccess();
+      try{ loadPersistedExcelData(); }catch(e){ console.warn('Excel load failed', e); }
       if(!currentRole) openRoleModal();
       else activateSavedTab();
     }
