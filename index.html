@@ -103,11 +103,12 @@
             return snap.exists ? snap.data().rows : null;
           },
 
-          async clearExcelData(){
+          async clearExcelData(maxChunks){
             // Delete meta
-            await db.collection('config').doc('excelMeta').delete();
-            // Delete all chunks (up to 20)
-            for(let i = 0; i < 20; i++){
+            try { await db.collection('config').doc('excelMeta').delete(); } catch(e){}
+            // Delete all chunks (default up to 100 to be safe)
+            const limit = maxChunks || 100;
+            for(let i = 0; i < limit; i++){
               try { await db.collection('excelData').doc('chunk_' + i).delete(); } catch(e){}
             }
           }
@@ -792,8 +793,14 @@
       <!-- Excel Upload — Planner Only -->
       <div class="card" style="border-top:4px solid #10b981;background:linear-gradient(135deg,#ecfdf5,#f8fafc);margin-bottom:22px;">
         <h3 class="card-title" style="margin-bottom:14px;"><i class="fa-solid fa-file-excel" style="color:#10b981;"></i> Import Planning Excel File (PR-PO Data)</h3>
-        <div class="biz-box" style="margin-bottom:16px;">Upload your daily PR-PO Excel file here. The Dashboard will instantly update with clickable status cards and area-wise drill-down details. Previous data is remembered until you clear or re-upload.</div>
+        <div class="biz-box" style="margin-bottom:16px;">
+          <strong>📋 How to update PR-PO data:</strong><br>
+          <strong>Step 1:</strong> Download the sample template below (correct column format).<br>
+          <strong>Step 2:</strong> Paste your latest SAP PR-PO data into the template (keep the column headers as-is).<br>
+          <strong>Step 3:</strong> Upload the filled file. The Dashboard updates instantly for all users.
+        </div>
         <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+          <button class="btn blue" onclick="downloadSampleTemplate()" style="font-size:.95rem;padding:12px 20px;"><i class="fa-solid fa-download"></i> Download Sample Template</button>
           <label class="btn green" style="cursor:pointer;font-size:.95rem;padding:12px 20px;">
             <i class="fa-solid fa-upload"></i> Upload Excel File
             <input type="file" id="excelFileInput" accept=".xlsx,.xls" style="display:none;" onchange="handleExcelUpload(this)">
@@ -2488,6 +2495,78 @@
       return String(v);
     }
 
+    async function downloadSampleTemplate() {
+      // Load SheetJS if not present
+      if (!window.XLSX) {
+        await new Promise((res, rej) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          s.onload = res; s.onerror = rej;
+          document.head.appendChild(s);
+        });
+      }
+
+      // Exact column headers the portal reads (must match!)
+      const headers = ['Sr-No','PR Status','PR Date','PR No','Line Item','Material Code','Description','PR Qty','UOM','Unit Price','Total Value','Tracking ID','User Dept','PO Status','RFX/RFQ NUMBER','TR Submission Date','Offer date','Today date','PO Date','PO No','PO Line item','PO Qty','PO Delivery Date','Purchaser','Vendor Details'];
+
+      // Example rows showing each PO Status type so users see the correct spelling
+      const examples = [
+        [1,'PR Released','03-09-2024','33345832',10,'300329716','PIN BUSH,drg:ESHL/COREX/CDP 011',100,'NO',327.78,32778,'24CXMH','MH','PO CREATED','6000115037','GIVEN','','23-06-2026','29-08-2024','4500366772','','100','10-10-2024','Nilesh Jetani','123967 RANK HYDRAULICS'],
+        [2,'PR Released','14-09-2024','33354358',10,'300870967','VLV,NR,POPPET,10MM,CS,PN250,THRD',20,'SET',2000,40000,'22MH','MH','RFQ/RFX PENDING','','','','23-06-2026','','','','20','','Meghavi Eshwar','—'],
+        [3,'PR Released','01-10-2024','33360011',10,'300555123','BEARING,BALL,6205,DRG:PG-08-0163',8,'NO',1500,12000,'25CXTW','TOWER','RFQ CREATED','RFX-25040','','15-06-2026','23-06-2026','','','','8','','Ajeet Sharma','—'],
+        [4,'PR Released','05-10-2024','33361234',10,'300666789','SEAL,OIL,DRG:PG-07-0004',4,'NO',800,3200,'25CXHYD','HYD','TR Submitted, PO not Created','RFX-25467','GIVEN','','23-06-2026','','','','4','','Satyam Jain','—'],
+        [5,'PR Released','08-10-2024','33362567',10,'300777456','GASKET,SPIRAL,DRG:PG-10-0013',12,'NO',450,5400,'25CXPH','PUMP HOUSE','TR Pending','RFX-25716','','','23-06-2026','','','','12','','Ajeet Sharma','—'],
+        [6,'With HOD','10-10-2024','33363890',10,'300888234','COUPLING,FLEXIBLE,DRG:PG-08-0119',2,'NO',5000,10000,'25CXMH','MH','PO RELESAE PENDING','','','','23-06-2026','','','','2','','—','—'],
+      ];
+
+      const wsData = [headers, ...examples];
+      const wb = window.XLSX.utils.book_new();
+      const ws = window.XLSX.utils.aoa_to_sheet(wsData);
+
+      // Column widths for readability
+      ws['!cols'] = [6,12,11,10,9,13,32,7,6,9,11,11,12,24,15,16,10,11,11,12,11,7,13,16,28].map(w => ({wch:w}));
+
+      // Bold header row
+      const range = window.XLSX.utils.decode_range(ws['!ref']);
+      for(let C = range.s.c; C <= range.e.c; C++){
+        const cell = ws[window.XLSX.utils.encode_cell({r:0,c:C})];
+        if(cell) cell.s = { font:{bold:true,color:{rgb:'FFFFFF'}}, fill:{fgColor:{rgb:'1E293B'}}, alignment:{horizontal:'center'} };
+      }
+
+      window.XLSX.utils.book_append_sheet(wb, ws, 'PR-PO Data');
+
+      // Add an instructions sheet
+      const instructions = [
+        ['COREX PLANNING PORTAL — PR-PO DATA UPLOAD TEMPLATE'],
+        [''],
+        ['HOW TO USE THIS TEMPLATE:'],
+        ['1. Go to the "PR-PO Data" sheet (first tab).'],
+        ['2. Keep ROW 1 (column headers) exactly as-is — do NOT rename or delete them.'],
+        ['3. Delete the 6 example rows and paste your actual SAP PR-PO data below the headers.'],
+        ['4. Save the file, then upload it in the portal Admin Entry tab.'],
+        [''],
+        ['IMPORTANT — PO STATUS VALUES MUST MATCH THESE EXACTLY:'],
+        ['Status in your file','→ Dashboard Category'],
+        ['PO CREATED','→ PO Created'],
+        ['RFQ/RFX PENDING','→ RFQ Pending'],
+        ['RFQ CREATED','→ RFQ Created'],
+        ['TR Submitted, PO not Created','→ TR Submitted'],
+        ['TR Pending','→ TR Pending'],
+        ['PO RELESAE PENDING','→ PO Pending'],
+        [''],
+        ['PR STATUS values (for PR Release tracking):'],
+        ['PR Released, With HOD, Store Query, With Store, With Planner, With TC, Zadd Pending'],
+        [''],
+        ['NOTE: User Dept = area name (MH, TOWER, HYD, STORE, PUMP HOUSE, SHIFT etc.)'],
+        ['Template generated by COREX Planning Portal V3.0'],
+      ];
+      const ws2 = window.XLSX.utils.aoa_to_sheet(instructions);
+      ws2['!cols'] = [{wch:42},{wch:30}];
+      window.XLSX.utils.book_append_sheet(wb, ws2, 'Instructions');
+
+      window.XLSX.writeFile(wb, 'COREX_PR-PO_Template.xlsx');
+    }
+
     async function handleExcelUpload(input) {
       const file = input.files[0];
       if (!file) return;
@@ -2543,7 +2622,7 @@
         // Store as normalized full-name rows in memory
         excelRows = compact.map(normalizeRow);
 
-        bar.style.width = '90%'; ptext.textContent = 'Saving to cloud...';
+        bar.style.width = '85%'; ptext.textContent = 'Clearing old data...';
 
         if (window._fbReady) {
           try {
@@ -2551,6 +2630,24 @@
             const chunks = [];
             for (let i = 0; i < compact.length; i += CHUNK) chunks.push(compact.slice(i, i + CHUNK));
 
+            // STEP 1: Clear ALL old chunks first (prevents stale data from old uploads)
+            let oldChunkCount = 100;
+            try {
+              const oldMeta = await window._fb.loadExcelMeta();
+              if(oldMeta && oldMeta.totalChunks) oldChunkCount = Math.max(oldMeta.totalChunks + 5, chunks.length + 5);
+            } catch(e){}
+            await window._fb.clearExcelData(oldChunkCount);
+
+            bar.style.width = '90%'; ptext.textContent = 'Saving new data...';
+
+            // STEP 2: Save all new chunks
+            for (let i = 0; i < chunks.length; i++) {
+              bar.style.width = (90 + Math.round((i+1) / chunks.length * 8)) + '%';
+              ptext.textContent = `Syncing to cloud... (${i+1}/${chunks.length})`;
+              await window._fb.saveExcelChunk(i, chunks[i]);
+            }
+
+            // STEP 3: Save metadata LAST (so loaders only read complete data)
             await window._fb.saveExcelMeta({
               fileName: file.name,
               uploadedAt: new Date().toISOString(),
@@ -2558,12 +2655,7 @@
               totalChunks: chunks.length
             });
 
-            for (let i = 0; i < chunks.length; i++) {
-              bar.style.width = (90 + Math.round((i+1) / chunks.length * 9)) + '%';
-              ptext.textContent = `Syncing to cloud... (${i+1}/${chunks.length})`;
-              await window._fb.saveExcelChunk(i, chunks[i]);
-            }
-            console.log(`✅ Excel synced: ${compact.length} rows in ${chunks.length} chunks`);
+            console.log(`✅ Excel synced: ${compact.length} rows in ${chunks.length} chunks (cleared ${oldChunkCount} old)`);
           } catch(err) {
             console.warn('Firebase save failed, using localStorage:', err);
             lsSet(EXCEL_KEY, JSON.stringify(compact));
@@ -2574,20 +2666,30 @@
 
         bar.style.width = '100%';
         const dt = new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+
+        // Calculate category counts for verification message
+        const catCounts = {};
+        excelRows.forEach(r => { catCounts[r.category] = (catCounts[r.category]||0)+1; });
+        const summary = Object.entries(catCounts).map(([k,v]) => `${k}: ${v}`).join(', ');
+
         const infoEl = document.getElementById('excelFileInfo');
         if (infoEl) { infoEl.textContent = `✅ ${file.name} — ${excelRows.length} rows synced on ${dt}`; infoEl.style.display = 'block'; }
         const clearBtn = document.getElementById('clearExcelBtn');
         if (clearBtn) clearBtn.style.display = '';
-        // Update dashboard Last Updated timestamp
         const lastUpdEl = document.getElementById('prPoLastUpdatedText');
         if(lastUpdEl) lastUpdEl.textContent = 'PR-PO Data Updated: ' + dt;
-        setTimeout(() => { progress.style.display = 'none'; }, 800);
+        setTimeout(() => { progress.style.display = 'none'; }, 1200);
 
         renderExcelDashboard();
+
+        // Show confirmation with actual counts so user can verify
+        ptext.textContent = `✅ Done! ${excelRows.length} rows uploaded.`;
+        alert(`✅ Upload Successful!\n\n${excelRows.length} rows loaded from ${file.name}\n\nStatus breakdown:\n${summary}\n\nThe dashboard is now updated. Other users will see the new data when they refresh.`);
       } catch(err) {
         console.error('Excel parse error', err);
         ptext.textContent = '❌ Error: ' + err.message;
-        bar.style.background = '#e11d48';
+        bar.style.background = '#dc2626';
+        alert('❌ Upload failed: ' + err.message + '\n\nPlease check the Excel file format and try again.');
       }
       input.value = '';
     }
