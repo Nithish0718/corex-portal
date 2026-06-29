@@ -748,6 +748,7 @@
                     <option value="SET">SET</option>
                     <option value="ROL">ROL</option>
                     <option value="KG">KG</option>
+                    <option value="Mtr">Mtr</option>
                   </select>
                 </div>
                 <div class="field"><label>Unit Value (INR)</label><input id="plUnitValue" type="number" step="0.01" min="0"></div>
@@ -1260,6 +1261,7 @@
             <option value="SET" ${prefill.uom === 'SET' ? 'selected' : ''}>SET</option>
             <option value="ROL" ${prefill.uom === 'ROL' ? 'selected' : ''}>ROL</option>
             <option value="KG" ${prefill.uom === 'KG' ? 'selected' : ''}>KG</option>
+            <option value="Mtr" ${prefill.uom === 'Mtr' ? 'selected' : ''}>Mtr</option>
           </select>
         </td>
         <td><input type="number" class="mat-qty" min="1" step="1" value="${Number(prefill.qty || 1)}" required></td>
@@ -1446,6 +1448,8 @@
           return;
         }
 
+        const editingId = window._editingRequestId;
+
         // Add to local state immediately so user sees it right away
         state.requests.unshift(payload);
         renderTracker();
@@ -1453,6 +1457,20 @@
 
         // Now save to Firebase
         await saveState(payload.id);
+
+        // If editing, delete the old request after new one saves
+        if(editingId){
+          try {
+            await window._fb.deleteRequest(editingId);
+            state.requests = state.requests.filter(r => r.id !== editingId);
+            window._editingRequestId = null;
+            const banner = document.getElementById('editModeBanner');
+            if(banner) banner.remove();
+            renderTracker();
+          } catch(e) {
+            console.warn('Could not delete old request', e);
+          }
+        }
 
         resetRequestForm();
         document.getElementById('successModal').style.display = 'flex';
@@ -1561,11 +1579,14 @@
         const isPlanner     = currentRole === 'planner';
         const isOverdue     = needDate && new Date(needDate) < new Date();
 
-        const lineRows = req.items.map((item, idx) => `
+        const lineRows = req.items.map((item, idx) => {
+          const isReturnedOrRejected = item.status === 'Returned' || item.status === 'Rejected';
+          const plannerRemark = item.planner?.remarks?.trim();
+          return `
           <tr class="${item.type === 'Emergency' || item.type === 'Breakdown' ? 'row-emergency' : ''}">
             <td>${idx + 1}</td>
             <td>${isPlanner ? `<button class="material-link" type="button" onclick="openPlanner('${req.id}','${item.id}')">${escapeHtml(item.matCode)}</button>` : `<span class="mono">${escapeHtml(item.matCode)}</span>`}</td>
-            <td>${escapeHtml(item.desc)}</td>
+            <td>${escapeHtml(item.desc)}${isReturnedOrRejected && plannerRemark ? `<div style="margin-top:6px;padding:6px 8px;background:${item.status==='Rejected'?'#fef2f2':'#fff7ed'};border-left:3px solid ${item.status==='Rejected'?'#dc2626':'#d97706'};border-radius:6px;font-size:.78rem;color:#0f172a;"><strong>${item.status==='Rejected'?'❌ Rejection Reason':'↩️ Return Reason'}:</strong> ${escapeHtml(plannerRemark)}</div>` : ''}</td>
             <td>${typeBadge(item.type)}</td>
             <td>${escapeHtml(item.planner?.uomReview || item.uom)}</td>
             <td style="text-align:center;font-weight:700;">${Number(item.qty || 0)}</td>
@@ -1574,8 +1595,8 @@
             <td>${escapeHtml(item.planner?.installedLocation || item.location || '-')}</td>
             <td>${statusPill(item.status || 'Pending Review')}</td>
             ${isPlanner ? `<td><button class="btn white sm" type="button" onclick="openPlanner('${req.id}','${item.id}')"><i class="fa-solid fa-pen-to-square"></i> Review</button></td>` : `<td><span class="muted" style="font-size:.77rem;"><i class="fa-solid fa-eye"></i> View only</span></td>`}
-          </tr>
-        `).join('');
+          </tr>`;
+        }).join('');
 
         const pColor = priorityColor(priority);
 
@@ -1610,7 +1631,12 @@
                   <button class="btn green sm" type="button" onclick="bulkUpdateRequest('${req.id}','Approved')"><i class="fa-solid fa-check-double"></i> Approve All</button>
                   <button class="btn orange sm" type="button" onclick="bulkUpdateRequest('${req.id}','Returned')"><i class="fa-solid fa-rotate-left"></i> Return All</button>
                   <button class="btn red sm" type="button" onclick="bulkUpdateRequest('${req.id}','Rejected')"><i class="fa-solid fa-ban"></i> Reject All</button>
-                </div>` : `<div class="chip success" style="align-self:flex-start;"><i class="fa-solid fa-eye"></i> View Only</div>`}
+                  <button class="btn red sm" type="button" onclick="deleteSingleRequest('${req.id}')" title="Permanently delete this request"><i class="fa-solid fa-trash"></i> Delete</button>
+                </div>` : `
+                <div class="request-actions">
+                  ${(requestStatus === 'Returned' || requestStatus === 'Rejected' || requestStatus === 'Mixed') ? `<button class="btn primary sm" type="button" onclick="editRequest('${req.id}')"><i class="fa-solid fa-pen-to-square"></i> Edit & Resubmit</button>` : ''}
+                  <div class="chip success" style="align-self:flex-start;"><i class="fa-solid fa-eye"></i> View Only</div>
+                </div>`}
               </div>
             </div>
             <div style="padding:10px 16px;">
@@ -2086,6 +2112,106 @@
         setSyncStatus('error','Delete Failed');
         alert('Error deleting data: ' + err.message);
       }
+    }
+
+    /* ── Delete a single request (Planner only) ── */
+    async function deleteSingleRequest(requestId){
+      if(currentRole !== 'planner'){ alert('Planner access required.'); return; }
+      const req = state.requests.find(r => r.id === requestId);
+      if(!req){ alert('Request not found.'); return; }
+      const confirmMsg = `Are you sure you want to PERMANENTLY DELETE this request?\n\n` +
+        `Request ID: ${req.id}\n` +
+        `Requester: ${req.reqName}\n` +
+        `Area: ${req.reqArea}\n` +
+        `Items: ${req.items.length}\n\n` +
+        `This action CANNOT be undone.`;
+      if(!confirm(confirmMsg)) return;
+      setSyncStatus('saving','Deleting request...');
+      try{
+        await window._fb.deleteRequest(requestId);
+        // Remove from local state immediately
+        state.requests = state.requests.filter(r => r.id !== requestId);
+        if(plannerContext.requestId === requestId) plannerContext = { requestId:null, itemId:null };
+        renderTracker();
+        renderPlannerPanel();
+        refreshDashboard();
+        setSyncStatus('online','Cloud Synced');
+        alert('✅ Request ' + requestId + ' deleted successfully.');
+      }catch(err){
+        console.error('Delete failed', err);
+        setSyncStatus('error','Delete Failed');
+        alert('❌ Error deleting request: ' + err.message);
+      }
+    }
+
+    /* ── User: Edit a Returned/Rejected request and resubmit ── */
+    function editRequest(requestId){
+      const req = state.requests.find(r => r.id === requestId);
+      if(!req){ alert('Request not found.'); return; }
+
+      // Confirm before editing
+      const reqStatus = getRequestStatus(req);
+      const confirmMsg = `Edit Request ${req.id}?\n\n` +
+        `This will load the request into the Material Request form for editing.\n` +
+        `After making corrections, submitting will create a NEW request and DELETE the old one.\n\n` +
+        `Status: ${reqStatus}\n` +
+        `Items: ${req.items.length}\n\n` +
+        `Continue?`;
+      if(!confirm(confirmMsg)) return;
+
+      // Switch to Material Request tab
+      const reqBtn = [...document.querySelectorAll('[data-tab-btn]')].find(x => x.getAttribute('onclick').includes("'req'"));
+      if(reqBtn) switchTab('req', reqBtn);
+
+      // Pre-fill general info
+      document.getElementById('reqName').value     = req.reqName  || '';
+      document.getElementById('reqArea').value     = req.reqArea  || '';
+      document.getElementById('reqNeed').value     = req.reqNeed  || '';
+      document.getElementById('reqCalc').value     = req.reqCalc  || '';
+      document.getElementById('reqRisk').value     = req.reqRisk  || '';
+      document.getElementById('reqAlt').value      = req.reqAlt   || '';
+      const priorityEl = document.getElementById('reqPriority');
+      if(priorityEl) priorityEl.value = req.reqPriority || 'Medium';
+      const needDateEl = document.getElementById('reqNeedDate');
+      if(needDateEl) needDateEl.value = req.reqNeedDate || '';
+
+      // Clear and re-add line items from existing request
+      document.getElementById('itemRows').innerHTML = '';
+      req.items.forEach(item => addLineItem({
+        matCode:   item.matCode,
+        desc:      item.desc,
+        type:      item.type,
+        uom:       item.uom,
+        qty:       item.qty,
+        installed: item.installed,
+        siteStock: item.siteStock,
+        location:  item.location
+      }));
+
+      // Mark this as an edit (so submit will delete the old one)
+      window._editingRequestId = requestId;
+
+      // Show edit-mode banner
+      const form = document.getElementById('requestForm');
+      let banner = document.getElementById('editModeBanner');
+      if(!banner){
+        banner = document.createElement('div');
+        banner.id = 'editModeBanner';
+        banner.style.cssText = 'background:#fef3c7;border:2px solid #d97706;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-weight:700;color:#92400e;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;';
+        form.insertBefore(banner, form.firstChild);
+      }
+      banner.innerHTML = `<span><i class="fa-solid fa-pen-to-square"></i> Editing ${requestId} — Submitting will replace the old request.</span><button type="button" class="btn gray sm" onclick="cancelEditMode()"><i class="fa-solid fa-xmark"></i> Cancel Edit</button>`;
+
+      // Scroll to top of form
+      document.getElementById('reqName').scrollIntoView({ behavior:'smooth', block:'center' });
+    }
+
+    function cancelEditMode(){
+      window._editingRequestId = null;
+      const banner = document.getElementById('editModeBanner');
+      if(banner) banner.remove();
+      resetRequestForm();
+      alert('Edit cancelled. Form has been reset.');
     }
 
     async function seedDemoData(){
@@ -3014,14 +3140,31 @@
       const requests = requestId ? state.requests.filter(r => r.id === requestId) : getFilteredRequests();
       if(!requests.length){ alert('No data to export.'); return; }
 
-      // Load docx library
+      // Load docx library - try multiple CDNs in case company network blocks one
       if(!window.docx){
-        await new Promise((res,rej) => {
-          const s = document.createElement('script');
-          s.src = 'https://unpkg.com/docx@8.5.0/build/index.js';
-          s.onload = res; s.onerror = rej;
-          document.head.appendChild(s);
-        });
+        const cdns = [
+          'https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.js',
+          'https://unpkg.com/docx@8.5.0/build/index.js',
+          'https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/index.js'
+        ];
+        let loaded = false;
+        for(const url of cdns){
+          try {
+            await new Promise((res,rej) => {
+              const s = document.createElement('script');
+              s.src = url;
+              s.onload = res;
+              s.onerror = () => rej(new Error('Failed to load ' + url));
+              setTimeout(() => rej(new Error('Timeout loading ' + url)), 8000);
+              document.head.appendChild(s);
+            });
+            if(window.docx){ loaded = true; console.log('✅ docx loaded from', url); break; }
+          } catch(e){ console.warn('CDN failed:', url, e.message); }
+        }
+        if(!loaded || !window.docx){
+          alert('❌ Word export library could not load.\n\nYour company network may be blocking the CDN.\n\nWorkaround: Use the Excel export instead — it has the same data and works without external libraries.');
+          return;
+        }
       }
 
       const {
